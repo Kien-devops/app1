@@ -1,6 +1,6 @@
 # Đồ án Microservices CI/CD trên K3s
 
-Đây là đồ án xây dựng và triển khai một ứng dụng microservices hoàn chỉnh trên cụm K3s on-premises. Trọng tâm của đồ án là mô phỏng quy trình DevOps thực tế từ source code đến môi trường chạy:
+Đây là đồ án xây dựng và triển khai một ứng dụng microservices hoàn chỉnh trên cụm K3s on-premises. Cụm K3s, HAProxy, Traefik và ServiceLB bên dưới được dựng và quản lý bằng repository [`Kien-devops/k3s-onprem`](https://github.com/Kien-devops/k3s-onprem); repository `app1` quản lý source code và vòng đời release của ứng dụng. Trọng tâm của đồ án là mô phỏng quy trình DevOps thực tế từ source code đến môi trường chạy:
 
 ```text
 Code → Test → Build image → Security scan → GHCR → Deploy K3s → Validation
@@ -95,6 +95,32 @@ Ba backend chỉ dùng `ClusterIP`, không expose trực tiếp ra Internet. Tra
 | `server-tang2` | K3s control plane và Kubernetes API |
 | `server-tang3` | HAProxy, cloudflared, self-hosted GitHub runner và deploy kubeconfig |
 | `server-tang4` | K3s worker chạy frontend, backend và Traefik |
+
+### Quan hệ với repository `k3s-onprem`
+
+Ứng dụng không tự cài K3s hoặc tạo hạ tầng cluster. Nền tảng phải được dựng và kiểm tra trước bằng repository [`k3s-onprem`](https://github.com/Kien-devops/k3s-onprem):
+
+```text
+k3s-onprem
+  -> dựng server-tang2 / tang3 / tang4
+  -> cài K3s control plane và worker
+  -> cấu hình HAProxy, ServiceLB và Traefik
+  -> kiểm tra cluster và ingress data path
+                    |
+                    v
+app1
+  -> test và build bốn container image
+  -> push image lên GHCR
+  -> deploy workload vào namespace microservices-demo
+  -> kiểm tra ứng dụng qua hạ tầng có sẵn
+```
+
+| Repository | Trách nhiệm |
+| --- | --- |
+| [`k3s-onprem`](https://github.com/Kien-devops/k3s-onprem) | Ansible inventory/playbooks, K3s nodes, Kubernetes API endpoint, HAProxy, Traefik, ServiceLB và platform validation |
+| [`app1`](https://github.com/Kien-devops/app1) | Source code, tests, Dockerfiles, GHCR images, application manifests, namespace-scoped RBAC và CI/CD release |
+
+`playbooks/site.yml` của `k3s-onprem` không deploy hoặc rollback `app1`. Ngược lại, pipeline `app1` không cài lại K3s, không sửa HAProxy và không quản lý workload của ứng dụng khác. Tài liệu nhìn từ phía cluster nằm tại [`k3s-onprem/docs/app1-microservices.md`](https://github.com/Kien-devops/k3s-onprem/blob/main/docs/app1-microservices.md).
 
 ### Luồng CI/CD
 
