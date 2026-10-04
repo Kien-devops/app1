@@ -1,0 +1,26 @@
+# Local server access details and credentials
+server.txt
+.ssh-askpass.cmd
+.ssh-known-hosts
+.platform-reference/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.kubeconfig
+
+# Build and test artifacts
+node_modules/
+dist/
+coverage/
+rendered/
+*.log
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

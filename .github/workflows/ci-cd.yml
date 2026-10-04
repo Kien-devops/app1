@@ -1,0 +1,145 @@
+name: ci-cd
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: production-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test ${{ matrix.component }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [frontend, auth-service, user-service, product-service]
+        include:
+          - component: frontend
+            directory: frontend
+          - component: auth-service
+            directory: services/auth-service
+          - component: user-service
+            directory: services/user-service
+          - component: product-service
+            directory: services/product-service
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Run tests
+        working-directory: ${{ matrix.directory }}
+        run: npm test
+
+  build-scan-publish:
+    name: Build and scan ${{ matrix.component }}
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [frontend, auth-service, user-service, product-service]
+        include:
+          - component: frontend
+            dockerfile: frontend/Dockerfile
+          - component: auth-service
+            dockerfile: services/auth-service/Dockerfile
+          - component: user-service
+            dockerfile: services/user-service/Dockerfile
+          - component: product-service
+            dockerfile: services/product-service/Dockerfile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Define immutable image reference
+        shell: bash
+        run: |
+          echo "IMAGE_REGISTRY=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "LOCAL_IMAGE=local/${{ matrix.component }}:${GITHUB_SHA}" >> "$GITHUB_ENV"
+      - name: Build image
+        run: docker build --file "${{ matrix.dockerfile }}" --tag "$LOCAL_IMAGE" .
+      - name: Scan image for fixable critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.LOCAL_IMAGE }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL
+      - name: Login to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Push immutable image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          remote_image="$IMAGE_REGISTRY/${{ matrix.component }}:$GITHUB_SHA"
+          docker tag "$LOCAL_IMAGE" "$remote_image"
+          docker push "$remote_image"
+
+  deploy:
+    name: Deploy exact Git SHA to K3s
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-scan-publish
+    runs-on: [self-hosted, Linux, X64, k3s-deploy]
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify deployment identity
+        env:
+          KUBECONFIG: /home/monitor/.kube/microservices-demo-deployer.config
+        run: |
+          test "$(stat -c '%a' "$KUBECONFIG")" = "600"
+          kubectl auth can-i patch deployments -n microservices-demo
+          test "$(kubectl auth can-i get pods -n default)" = "no"
+      - name: Render and apply immutable manifests
+        env:
+          KUBECONFIG: /home/monitor/.kube/microservices-demo-deployer.config
+        shell: bash
+        run: |
+          export IMAGE_REGISTRY="ghcr.io/${GITHUB_REPOSITORY,,}"
+          export IMAGE_TAG="$GITHUB_SHA"
+          sh scripts/render-manifests.sh "$RUNNER_TEMP/rendered"
+          kubectl apply -k "$RUNNER_TEMP/rendered"
+      - name: Wait for all rollouts
+        env:
+          KUBECONFIG: /home/monitor/.kube/microservices-demo-deployer.config
+        run: |
+          for deployment in frontend auth-service user-service product-service; do
+            kubectl rollout status "deployment/$deployment" -n microservices-demo --timeout=180s
+          done
+      - name: Validate service routes through HAProxy and Traefik
+        shell: bash
+        run: |
+          for path in / /api/auth/health /api/users/health /api/products/health; do
+            curl --fail --show-error --silent --retry 5 \
+              -H 'Host: app1.onprem.site' "http://192.168.30.45${path}" >/dev/null
+          done
+      - name: Show deployment evidence
+        if: always()
+        env:
+          KUBECONFIG: /home/monitor/.kube/microservices-demo-deployer.config
+        run: |
+          kubectl get deployments,pods,services,ingress -n microservices-demo -o wide
+          echo "Rollback: kubectl rollout undo deployment/<name> -n microservices-demo"

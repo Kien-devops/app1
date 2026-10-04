@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="K3s microservices CI/CD demonstration">
+    <title>K3s Microservices Demo</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">ON-PREMISES · K3S · CI/CD</p>
+          <h1>K3s Microservices Demo</h1>
+          <p class="subtitle">Một public endpoint, bốn workload độc lập, routing bởi Traefik.</p>
+        </div>
+        <button id="refresh" type="button">Kiểm tra lại</button>
+      </header>
+
+      <section aria-labelledby="service-heading">
+        <div class="section-heading">
+          <h2 id="service-heading">Service health</h2>
+          <span id="checked-at" aria-live="polite">Đang kiểm tra…</span>
+        </div>
+        <div class="service-grid">
+          <article class="card" data-service="auth">
+            <span class="dot" aria-hidden="true"></span>
+            <div><strong>Auth Service</strong><p>Demo session và login endpoint</p></div>
+            <span class="status">CHECKING</span>
+          </article>
+          <article class="card" data-service="users">
+            <span class="dot" aria-hidden="true"></span>
+            <div><strong>User Service</strong><p>Thông tin profile người dùng</p></div>
+            <span class="status">CHECKING</span>
+          </article>
+          <article class="card" data-service="products">
+            <span class="dot" aria-hidden="true"></span>
+            <div><strong>Product Service</strong><p>Danh mục sản phẩm mẫu</p></div>
+            <span class="status">CHECKING</span>
+          </article>
+        </div>
+      </section>
+
+      <section class="detail-grid">
+        <article class="panel">
+          <p class="panel-label">CURRENT USER</p>
+          <h2 id="user-name">Đang tải…</h2>
+          <p id="user-meta" class="muted"></p>
+        </article>
+        <article class="panel products-panel">
+          <p class="panel-label">PRODUCT CATALOGUE</p>
+          <div id="products" class="products"><p class="muted">Đang tải…</p></div>
+        </article>
+      </section>
+
+      <footer>
+        <span>Internet → Cloudflare → HAProxy → Traefik → ClusterIP Services</span>
+        <span id="overall" class="overall">INITIALIZING</span>
+      </footer>
+    </main>
+  </body>
+</html>
