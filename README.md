@@ -270,7 +270,7 @@ app1.onprem.site -> http://localhost:80
 
 TLS client kết thúc tại Cloudflare; tunnel gọi HTTP localhost trên tang3, rồi HAProxy chuyển sang Traefik. Backend không có NodePort/LoadBalancer riêng.
 
-NetworkPolicy mặc định deny ingress/egress cho namespace app và chỉ cho Traefik ở `kube-system` gọi port `8080`. Nếu Prometheus cần scrape `/metrics`, phải thêm policy rõ ràng cho Prometheus.
+NetworkPolicy mặc định deny ingress/egress cho namespace app và chỉ cho workload trong trusted namespace `kube-system` gọi port `8080` (Traefik là consumer hiện tại). Nếu Prometheus cần scrape `/metrics`, phải thêm policy rõ ràng cho Prometheus.
 
 ## 14. Deployment
 

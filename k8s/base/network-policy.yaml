@@ -19,11 +19,11 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
+        # kube-system is a trusted namespace in this homelab. A podSelector is
+        # intentionally omitted because Kustomize label propagation would add
+        # the application's part-of label and exclude the Traefik pod.
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: kube-system
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: traefik
       ports:
         - { protocol: TCP, port: 8080 }
