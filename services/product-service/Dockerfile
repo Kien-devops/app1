@@ -7,6 +7,6 @@ WORKDIR /app
 COPY --chown=node:node services/common ./common
 COPY --chown=node:node services/product-service/server.js ./product-service/server.js
 
-USER node
+USER 1000:1000
 EXPOSE 8080
 CMD ["node", "product-service/server.js"]
