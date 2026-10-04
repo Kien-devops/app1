@@ -141,5 +141,5 @@ jobs:
         env:
           KUBECONFIG: /home/monitor/.kube/microservices-demo-deployer.config
         run: |
-          kubectl get deployments,pods,services,ingress -n microservices-demo -o wide
+          kubectl get deployments,pods,services,endpointslices,ingress -n microservices-demo -o wide
           echo "Rollback: kubectl rollout undo deployment/<name> -n microservices-demo"
