@@ -1,169 +1,391 @@
-# K3s Microservices CI/CD Demo
+# Đồ án Microservices CI/CD trên K3s
 
-Ứng dụng microservices nhỏ nhưng có đầy đủ chuỗi delivery thực tế cho homelab K3s:
-
-- một frontend tĩnh chạy bằng NGINX non-root;
-- ba backend Node.js độc lập: `auth-service`, `user-service`, `product-service`;
-- bốn immutable container image trên GHCR;
-- GitHub-hosted runner chạy test, build và security scan;
-- self-hosted runner trên `server-tang3` chỉ thực hiện CD;
-- Kubernetes namespace/RBAC riêng và public route cố định `https://app1.onprem.site`.
-
-Đây là demo kỹ thuật. `auth-service` chỉ mô phỏng login, không phải hệ thống xác thực production.
-
-## 1. Tổng quan kiến trúc
+Đây là đồ án xây dựng và triển khai một ứng dụng microservices hoàn chỉnh trên cụm K3s on-premises. Trọng tâm của đồ án là mô phỏng quy trình DevOps thực tế từ source code đến môi trường chạy:
 
 ```text
-Developer
-   |
-   v
-GitHub
-   |
-   +----------------------------+
-   |                            |
-   v                            v
-CI                             CD
-GitHub-hosted                  Self-hosted tang3
-Test -> Build -> Trivy         Kubeconfig giới hạn RBAC
-   |                            |
-   v                            v
-GHCR                       HAProxy :6443
-                                |
-                                v
-                          K3s API tang2
-                                |
-                                v
-                          Worker tang4
-                                |
-                  +-------------+-------------+
-                  |             |      |      |
-                  v             v      v      v
-                 FE           Auth    User  Product
+Code → Test → Build image → Security scan → GHCR → Deploy K3s → Validation
 ```
 
-Luồng public traffic:
+Ứng dụng đang hoạt động tại **https://app1.onprem.site**.
+
+> `auth-service` chỉ mô phỏng đăng nhập để minh họa kiến trúc. Đây không phải hệ thống xác thực production.
+
+## 1. Đồ án làm gì?
+
+Đồ án gồm ba phần chính:
+
+1. **Ứng dụng microservices**
+   - Một frontend hiển thị sức khỏe hệ thống, user profile và danh sách sản phẩm.
+   - Ba backend độc lập: Auth, User và Product.
+   - Người dùng truy cập toàn bộ hệ thống qua một hostname duy nhất.
+
+2. **Đóng gói và vận hành trên Kubernetes**
+   - Mỗi component có container image riêng.
+   - Traefik định tuyến request theo URL path.
+   - Kubernetes quản lý health check, rolling update và tài nguyên.
+   - Workload chạy non-root, read-only filesystem và bị giới hạn quyền.
+
+3. **Tự động hóa CI/CD**
+   - GitHub Actions test từng component.
+   - Build và quét từng image bằng Trivy.
+   - Image được gắn bằng full Git SHA, không dùng `latest`.
+   - Self-hosted runner triển khai đúng image đã build vào K3s.
+
+## 2. Chức năng ứng dụng
+
+### Frontend dashboard
+
+Frontend có các chức năng:
+
+- kiểm tra trạng thái Auth, User và Product service;
+- hiển thị `HEALTHY` hoặc `UNAVAILABLE` cho từng service;
+- hiển thị thông tin người dùng mẫu;
+- hiển thị danh mục sản phẩm mẫu;
+- kiểm tra lại trạng thái bằng nút **Kiểm tra lại**;
+- hiển thị trạng thái tổng thể `ALL SYSTEMS HEALTHY` hoặc `DEGRADED`.
+
+Frontend dùng các URL tương đối như `/api/users/profile`. Browser không cần biết ClusterIP hoặc DNS nội bộ của Kubernetes và không phát sinh bài toán CORS giữa nhiều domain.
+
+### Backend APIs
+
+| Service | Method | Endpoint | Chức năng |
+| --- | --- | --- | --- |
+| Auth | `GET` | `/health` | Health probe nội bộ |
+| Auth | `GET` | `/api/auth/health` | Health check qua Ingress |
+| Auth | `GET` | `/api/auth/session` | Trả session demo |
+| Auth | `POST` | `/api/auth/login` | Mô phỏng login bằng username |
+| User | `GET` | `/health` | Health probe nội bộ |
+| User | `GET` | `/api/users/health` | Health check qua Ingress |
+| User | `GET` | `/api/users/profile` | Trả user profile mẫu |
+| Product | `GET` | `/health` | Health probe nội bộ |
+| Product | `GET` | `/api/products/health` | Health check qua Ingress |
+| Product | `GET` | `/api/products` | Trả danh sách sản phẩm mẫu |
+| Tất cả backend | `GET` | `/metrics` | Metrics dạng Prometheus |
+
+## 3. Kiến trúc hệ thống
+
+### Luồng request
 
 ```text
-Internet
-   |
+Người dùng
+    │ HTTPS
+    ▼
 Cloudflare Edge
-   |
-Cloudflare Tunnel (outbound từ tang3)
-   |
-cloudflared tang3 -> http://localhost:80
-   |
-HAProxy tang3 :80
-   |
-ServiceLB / Traefik tang4
-   |
-   +-- /api/auth*     -> auth-service:80
-   +-- /api/users*    -> user-service:80
-   +-- /api/products* -> product-service:80
-   `-- /*             -> frontend:80
+    │ Cloudflare Tunnel
+    ▼
+cloudflared - server-tang3
+    │
+    ▼
+HAProxy - server-tang3
+    │
+    ▼
+Traefik Ingress - K3s
+    ├── /                  → frontend
+    ├── /api/auth/*        → auth-service
+    ├── /api/users/*       → user-service
+    └── /api/products/*    → product-service
 ```
 
-HAProxy chỉ forward `:80/:443` tới Traefik. Mỗi ứng dụng mới chỉ cần Ingress rule, không cần thêm HAProxy backend.
+Ba backend chỉ dùng `ClusterIP`, không expose trực tiếp ra Internet. Traefik là điểm route duy nhất của ứng dụng trong cluster.
 
-## 2. Cấu trúc repository
+### Vai trò từng server
+
+| Server | Vai trò |
+| --- | --- |
+| `server-tang2` | K3s control plane và Kubernetes API |
+| `server-tang3` | HAProxy, cloudflared, self-hosted GitHub runner và deploy kubeconfig |
+| `server-tang4` | K3s worker chạy frontend, backend và Traefik |
+
+### Luồng CI/CD
+
+```text
+Push / Pull Request
+        │
+        ▼
+GitHub-hosted runners
+        ├── Test 4 component song song
+        ├── Build 4 container image
+        └── Trivy scan từng image
+                    │
+                    ▼
+                  GHCR
+        image:<full-git-sha>
+                    │
+                    ▼
+Self-hosted runner - server-tang3
+        ├── Render manifest bằng exact Git SHA
+        ├── kubectl apply
+        ├── Chờ rollout
+        └── Kiểm tra route qua HAProxy và Traefik
+```
+
+## 4. Công nghệ sử dụng
+
+| Thành phần | Công nghệ | Lý do |
+| --- | --- | --- |
+| Frontend | HTML, CSS, JavaScript, NGINX unprivileged | Nhẹ và ít dependency |
+| Backend | Node.js 24 built-in HTTP | Không có dependency runtime bên thứ ba |
+| Container registry | GHCR | Tích hợp trực tiếp GitHub Actions |
+| CI/CD | GitHub Actions | CI managed, CD qua runner nội bộ |
+| Orchestrator | K3s | Kubernetes nhẹ, phù hợp homelab |
+| Ingress | Traefik | Có sẵn trong K3s, route theo path |
+| Public access | Cloudflare Tunnel | Không mở inbound port trực tiếp |
+| Security scan | Trivy | Chặn lỗ hổng `CRITICAL` đã có bản vá |
+
+## 5. Cấu trúc repository
 
 ```text
 .
-|-- .github/workflows/ci-cd.yml
-|-- frontend/
-|   |-- index.html
-|   |-- app.js
-|   |-- styles.css
-|   |-- nginx.conf
-|   `-- Dockerfile
-|-- services/
-|   |-- common/http-service.js
-|   |-- auth-service/
-|   |-- user-service/
-|   `-- product-service/
-|-- k8s/
-|   |-- bootstrap/namespace-rbac.yaml
-|   `-- base/
-|-- scripts/
-|   |-- bootstrap-rbac.sh
-|   `-- render-manifests.sh
-`-- docs/github-bootstrap.md
+├── .github/workflows/ci-cd.yml
+├── docs/github-bootstrap.md
+├── frontend/
+│   ├── app.js
+│   ├── Dockerfile
+│   ├── frontend.test.js
+│   ├── index.html
+│   ├── nginx.conf
+│   ├── package.json
+│   └── styles.css
+├── k8s/
+│   ├── base/
+│   │   ├── auth-service.yaml
+│   │   ├── frontend.yaml
+│   │   ├── ingress.yaml
+│   │   ├── kustomization.yaml
+│   │   ├── network-policy.yaml
+│   │   ├── product-service.yaml
+│   │   └── user-service.yaml
+│   └── bootstrap/namespace-rbac.yaml
+├── scripts/
+│   ├── bootstrap-rbac.sh
+│   └── render-manifests.sh
+├── services/
+│   ├── common/http-service.js
+│   ├── auth-service/
+│   │   ├── Dockerfile
+│   │   ├── package.json
+│   │   ├── server.js
+│   │   └── server.test.js
+│   ├── product-service/
+│   │   ├── Dockerfile
+│   │   ├── package.json
+│   │   ├── server.js
+│   │   └── server.test.js
+│   └── user-service/
+│       ├── Dockerfile
+│       ├── package.json
+│       ├── server.js
+│       └── server.test.js
+├── .dockerignore
+├── .gitattributes
+├── .gitignore
+└── README.md
 ```
 
-## 3. Technology stack và lý do lựa chọn
+### `.github/` và `docs/`
 
-| Thành phần | Lựa chọn | Lý do |
-| --- | --- | --- |
-| Frontend | HTML/CSS/JavaScript + NGINX unprivileged | RAM thấp, không cần runtime framework |
-| Backend | Node.js built-in HTTP | Không có dependency production, build nhanh, attack surface nhỏ |
-| Container | Alpine-based, non-root | Image nhỏ, phù hợp worker homelab |
-| Orchestrator | K3s | Tận dụng cluster hiện hữu |
-| Ingress | Traefik bundled with K3s | Không thêm controller hoặc HAProxy rule theo app |
-| Registry | GHCR | Tích hợp trực tiếp với GitHub Actions |
-| CI/CD | GitHub Actions | CI managed; CD có network path nội bộ tới K3s API |
+| File | Chức năng |
+| --- | --- |
+| `.github/workflows/ci-cd.yml` | Pipeline test, build, Trivy scan, push GHCR và deploy K3s. Các Action được pin bằng commit SHA. |
+| `docs/github-bootstrap.md` | Hướng dẫn tạo GitHub repository, GHCR, production environment và self-hosted runner. |
 
-Trade-off chính: cluster chỉ có một control plane, một worker và một HAProxy endpoint. Hai frontend replicas bảo vệ khỏi process/pod failure nhưng không bảo vệ khỏi mất tang4. Đây không phải HA production.
+### `frontend/`
 
-## 4. Trách nhiệm microservices
+| File | Chức năng |
+| --- | --- |
+| `index.html` | Cấu trúc dashboard và các khu vực hiển thị dữ liệu. |
+| `styles.css` | Giao diện responsive và màu trạng thái. |
+| `app.js` | Gọi API, cập nhật trạng thái service, profile và sản phẩm. |
+| `nginx.conf` | Serve static files trên port `8080`, cung cấp `/health` và security headers. |
+| `Dockerfile` | Tạo image từ `nginx-unprivileged`, chạy bằng UID `101`. |
+| `frontend.test.js` | Kiểm tra các thành phần và hành vi quan trọng của frontend. |
+| `package.json` | Khai báo Node.js version và lệnh test. |
 
-### Auth service
+NGINX frontend chỉ serve static files. Việc route `/api/...` đến backend do Traefik Ingress đảm nhiệm.
 
-- `GET /health`: probe nội bộ.
-- `GET /api/auth/health`: health qua Ingress.
-- `GET /api/auth/session`: demo session.
-- `POST /api/auth/login`: demo login, không kiểm tra mật khẩu thật.
-- `GET /metrics`: Prometheus text format nội bộ.
+### `services/`
 
-### User service
+| File/thư mục | Chức năng |
+| --- | --- |
+| `common/http-service.js` | HTTP module dùng chung: JSON body, giới hạn 16 KiB, request ID, structured log, health, metrics và graceful shutdown. |
+| `auth-service/server.js` | API session và login demo. |
+| `user-service/server.js` | API profile người dùng mẫu. |
+| `product-service/server.js` | API danh mục sản phẩm mẫu. |
+| `*/server.test.js` | Unit/API test của từng backend bằng Node.js test runner. |
+| `*/Dockerfile` | Đóng gói từng backend, chạy bằng UID/GID `1000`. |
+| `*/package.json` | Khai báo `npm start`, `npm test` và Node.js 24+. |
 
-- `GET /health` và `GET /api/users/health`.
-- `GET /api/users/profile` trả profile mẫu.
-- `GET /metrics`.
+### `k8s/base/`
 
-### Product service
+| File | Chức năng |
+| --- | --- |
+| `frontend.yaml` | Deployment 2 replicas và ClusterIP Service cho frontend. |
+| `auth-service.yaml` | Deployment và Service cho Auth API. |
+| `user-service.yaml` | Deployment và Service cho User API. |
+| `product-service.yaml` | Deployment và Service cho Product API. |
+| `ingress.yaml` | Route hostname và API path đến đúng Service. |
+| `network-policy.yaml` | Default deny và chỉ cho traffic tin cậy từ `kube-system`. |
+| `kustomization.yaml` | Gom manifest, đặt namespace và common labels. |
 
-- `GET /health` và `GET /api/products/health`.
-- `GET /api/products` trả catalogue mẫu.
-- `GET /metrics`.
+Các Deployment đều có readiness/liveness probe, resource requests/limits, RollingUpdate, non-root user, seccomp, read-only root filesystem và drop Linux capabilities.
 
-Frontend không gọi Kubernetes DNS hoặc IP nội bộ. Tất cả request browser dùng relative URL `/api/...`, do đó không cần CORS và cùng đi qua một security boundary.
+### `k8s/bootstrap/` và `scripts/`
 
-## 5. Local development và test
+| File | Chức năng |
+| --- | --- |
+| `k8s/bootstrap/namespace-rbac.yaml` | Tạo namespace, `ci-deployer`, token, Role và RoleBinding giới hạn trong namespace ứng dụng. |
+| `scripts/bootstrap-rbac.sh` | Dùng admin kubeconfig để bootstrap RBAC và tạo deploy kubeconfig permission `0600`. |
+| `scripts/render-manifests.sh` | Thay image registry/tag placeholder bằng image reference cụ thể trước khi deploy. |
 
-Yêu cầu Node.js 24+; project không cần `npm install` vì không có third-party dependency.
+Deploy identity không được đọc Secrets, quản lý RBAC hoặc truy cập workload namespace khác.
+
+### Các file ở root
+
+| File | Chức năng |
+| --- | --- |
+| `.dockerignore` | Giới hạn Docker build context vào frontend và services. |
+| `.gitignore` | Chặn credentials, `server.txt`, kubeconfig, `.env` và artifacts local. |
+| `.gitattributes` | Chuẩn hóa Git line endings. |
+| `README.md` | Tài liệu kiến trúc, setup và vận hành đồ án. |
+
+## 6. Yêu cầu trước khi setup
+
+### Phát triển local
+
+- Git
+- Node.js 24+
+- npm
+- Docker nếu cần build container
+
+### Triển khai
+
+- K3s cluster và `kubectl` tương thích.
+- Traefik Ingress Controller.
+- Linux self-hosted runner truy cập được Kubernetes API.
+- GitHub repository có Actions và GHCR.
+- Domain hoặc tunnel chuyển traffic đến Traefik.
+
+Thông số của môi trường hiện tại:
+
+| Thành phần | Giá trị |
+| --- | --- |
+| Namespace | `microservices-demo` |
+| Hostname | `app1.onprem.site` |
+| K3s API qua HAProxy | `https://192.168.30.45:6443` |
+| Worker | `server-tang4` |
+| Runner label | `k3s-deploy` |
+
+## 7. Setup và chạy local
+
+### Clone repository
+
+```bash
+git clone https://github.com/Kien-devops/app1.git
+cd app1
+```
+
+### Chạy test
+
+Project hiện không có package dependency bên thứ ba nên không cần `npm install`.
 
 ```bash
 npm test --prefix frontend
 npm test --prefix services/auth-service
 npm test --prefix services/user-service
 npm test --prefix services/product-service
-
-PORT=8081 node services/auth-service/server.js
-PORT=8082 node services/user-service/server.js
-PORT=8083 node services/product-service/server.js
 ```
 
-Frontend có thể được serve bằng NGINX container; khi chạy độc lập, API path vẫn cần reverse proxy hoặc services tương ứng.
+### Chạy ba backend
 
-## 6. Docker architecture
+Mở ba PowerShell terminal:
 
-Build context là repository root để backend dùng chung module HTTP:
+```powershell
+# Terminal 1
+$env:PORT=8081
+npm.cmd start --prefix services/auth-service
+
+# Terminal 2
+$env:PORT=8082
+npm.cmd start --prefix services/user-service
+
+# Terminal 3
+$env:PORT=8083
+npm.cmd start --prefix services/product-service
+```
+
+Kiểm tra API:
+
+```powershell
+curl.exe http://localhost:8081/api/auth/health
+curl.exe http://localhost:8082/api/users/profile
+curl.exe http://localhost:8083/api/products
+```
+
+Trên Windows, dùng `npm.cmd` nếu PowerShell Execution Policy chặn `npm.ps1`.
+
+### Build container images
+
+Docker build context phải là repository root vì backend dùng `services/common/`.
 
 ```bash
-docker build -f frontend/Dockerfile -t local/frontend:test .
-docker build -f services/auth-service/Dockerfile -t local/auth-service:test .
-docker build -f services/user-service/Dockerfile -t local/user-service:test .
-docker build -f services/product-service/Dockerfile -t local/product-service:test .
+docker build -f frontend/Dockerfile -t local/frontend:dev .
+docker build -f services/auth-service/Dockerfile -t local/auth-service:dev .
+docker build -f services/user-service/Dockerfile -t local/user-service:dev .
+docker build -f services/product-service/Dockerfile -t local/product-service:dev .
 ```
 
-Các runtime đều:
+Smoke test một container:
 
-- chạy non-root;
-- không chứa source secret hoặc credentials;
-- không có package production bên thứ ba;
-- lắng nghe port `8080`;
-- dùng Kubernetes probe làm nguồn health chính.
+```bash
+docker run --rm -p 8080:8080 local/frontend:dev
+docker run --rm -p 8081:8080 local/auth-service:dev
+```
 
-CI gắn image bằng Git SHA:
+> Frontend chạy riêng chỉ kiểm tra giao diện và `/health`. Dashboard cần route `/api/...` của Traefik để hoạt động đầy đủ.
+
+## 8. Setup Kubernetes và deploy identity
+
+Chạy một lần trên `server-tang3` bằng admin kubeconfig:
+
+```bash
+cd /path/to/app1
+ADMIN_KUBECONFIG=/home/monitor/.kube/config \
+  sh scripts/bootstrap-rbac.sh
+```
+
+Script tạo kubeconfig riêng cho CI/CD:
+
+```text
+/home/monitor/.kube/microservices-demo-deployer.config
+```
+
+Xác minh quyền:
+
+```bash
+export KUBECONFIG=/home/monitor/.kube/microservices-demo-deployer.config
+
+kubectl auth can-i patch deployments -n microservices-demo
+# yes
+
+kubectl auth can-i get secrets -n microservices-demo
+# no
+
+kubectl auth can-i get pods -n default
+# no
+```
+
+Không cho runner sử dụng admin kubeconfig.
+
+## 9. Setup GitHub Actions, GHCR và runner
+
+### GitHub
+
+1. Bật GitHub Actions.
+2. Tạo GitHub Environment tên `production`.
+3. Nên bảo vệ branch `main` và yêu cầu CI pass trước merge.
+4. Không cho pull request không tin cậy chạy trên self-hosted runner.
+
+### GHCR images
 
 ```text
 ghcr.io/<owner>/<repo>/frontend:<git-sha>
@@ -172,114 +394,50 @@ ghcr.io/<owner>/<repo>/user-service:<git-sha>
 ghcr.io/<owner>/<repo>/product-service:<git-sha>
 ```
 
-Không deploy tag `latest`.
+Nên đặt package là `public` để K3s pull image mà không lưu PAT dài hạn. Nếu package private, dùng pull-only credential trong Kubernetes Secret và rotate định kỳ.
 
-## 7. Kubernetes architecture và manifests
+### Self-hosted runner
 
-Namespace duy nhất: `microservices-demo`.
+Vào `Settings → Actions → Runners → New self-hosted runner` và cài runner trên `server-tang3`:
 
-| Workload | Replicas | Service | Scheduling |
-| --- | ---: | --- | --- |
-| frontend | 2 | ClusterIP | `server-tang4` |
-| auth-service | 1 | ClusterIP | `server-tang4` |
-| user-service | 1 | ClusterIP | `server-tang4` |
-| product-service | 1 | ClusterIP | `server-tang4` |
+| Thuộc tính | Giá trị |
+| --- | --- |
+| Name | `server-tang3-k3s-deploy` |
+| Labels | `self-hosted`, `Linux`, `X64`, `k3s-deploy` |
+| Service user | `monitor` |
+| Work directory | `_work` |
 
-Mỗi Deployment có readiness/liveness probe, CPU/memory requests và limits, `RollingUpdate`, `runAsNonRoot`, `seccompProfile: RuntimeDefault`, drop Linux capabilities và read-only root filesystem.
+Runner chỉ cần outbound HTTPS đến GitHub. Hướng dẫn chi tiết: [`docs/github-bootstrap.md`](docs/github-bootstrap.md).
 
-Render manifest bằng image registry/tag cụ thể:
+### Public hostname
 
-```bash
-export IMAGE_REGISTRY=ghcr.io/<owner>/<repo>
-export IMAGE_TAG=<full-git-sha>
-sh scripts/render-manifests.sh rendered
-kubectl apply -k rendered
-```
-
-## 8. CI flow
+Cloudflare Tunnel map:
 
 ```text
-push / pull request
-   -> 4 test jobs song song
-   -> 4 Docker build jobs song song
-   -> Trivy scan từng image
-   -> push GHCR chỉ khi push main
+app1.onprem.site → http://localhost:80
 ```
 
-Security gate fail khi có vulnerability `CRITICAL` đã có bản vá. `HIGH` vẫn cần được review nhưng không block homelab để tránh pipeline bị treo do base-image issue chưa thể xử lý. Có thể nâng gate lên `HIGH,CRITICAL` khi image baseline sạch.
+Không expose Kubernetes API `:6443` ra Internet và không tạo NodePort riêng cho backend.
 
-Source artifact là Git commit được checkout. Build artifact là bốn container image. Deployment artifact là cùng bốn image immutable theo Git SHA cộng với manifest đã render.
+## 10. Deploy
 
-## 9. CD flow
+### Tự động
 
-Deploy job chỉ chạy sau khi cả bốn image đã test, scan và push thành công:
-
-```text
-GitHub main push
-   -> self-hosted runner tang3
-   -> render exact SHA
-   -> kubectl apply qua 192.168.30.45:6443
-   -> Deployment tạo ReplicaSet mới
-   -> readiness probe PASS
-   -> Service chuyển traffic
-   -> Pod cũ terminate
-   -> internal HTTP acceptance test
-```
-
-Job chạy trên labels `[self-hosted, Linux, X64, k3s-deploy]`, không chạy với pull request và không SSH vào tang2.
-
-## 10. GitHub-hosted và self-hosted runner
-
-GitHub-hosted runner thực thi code build/test có thể thay đổi theo commit. Self-hosted runner chỉ chạy deploy từ protected `main`, vì nó có đường mạng tới cluster và kubeconfig giới hạn quyền.
-
-Không mở inbound port cho runner. Runner chủ động kết nối outbound HTTPS tới GitHub. Hướng dẫn bootstrap ở [docs/github-bootstrap.md](docs/github-bootstrap.md).
-
-## 11. GHCR
-
-Workflow dùng `GITHUB_TOKEN` với `packages: write`, chỉ trong build job. Package nên đặt visibility `public` để K3s pull mà không lưu PAT dài hạn. Nếu bắt buộc private, dùng một read-only pull credential được quản lý như Kubernetes Secret và có quy trình rotation; không commit secret.
-
-## 12. RBAC và kubeconfig
-
-Bootstrap bằng admin identity trên tang3:
+Push `main` sẽ kích hoạt pipeline:
 
 ```bash
-cd /home/monitor/k3s-microservices-demo
-ADMIN_KUBECONFIG=/home/monitor/.kube/config sh scripts/bootstrap-rbac.sh
+git push origin main
 ```
 
-Script tạo ServiceAccount `ci-deployer`, namespace-scoped Role/RoleBinding và kubeconfig `/home/monitor/.kube/microservices-demo-deployer.config` mode `0600`.
+Deploy chỉ chạy sau khi toàn bộ test, build, scan và push image thành công.
 
-CI identity được create/update/patch Deployments, Services, ConfigMaps, Ingresses và NetworkPolicies trong namespace của app; được đọc Pods/logs/Events để chẩn đoán. Identity không được tạo RBAC, đọc Secrets, quản lý Namespace hoặc truy cập workload namespace khác.
+### Thủ công có kiểm soát
 
 ```bash
 export KUBECONFIG=/home/monitor/.kube/microservices-demo-deployer.config
-kubectl auth can-i patch deployments -n microservices-demo  # yes
-kubectl auth can-i get pods -n default                      # no
-kubectl auth can-i get secrets -n microservices-demo        # no
-```
-
-Token kubeconfig cần được rotate định kỳ. Với production thật, ưu tiên short-lived workload identity/OIDC thay vì long-lived ServiceAccount token.
-
-## 13. Networking, Traefik và Cloudflare Tunnel
-
-Ingress dùng `ingressClassName: traefik` và duy nhất hostname `app1.onprem.site`. Cloudflare Tunnel public hostname phải map:
-
-```text
-app1.onprem.site -> http://localhost:80
-```
-
-TLS client kết thúc tại Cloudflare; tunnel gọi HTTP localhost trên tang3, rồi HAProxy chuyển sang Traefik. Backend không có NodePort/LoadBalancer riêng.
-
-NetworkPolicy mặc định deny ingress/egress cho namespace app và chỉ cho workload trong trusted namespace `kube-system` gọi port `8080` (Traefik là consumer hiện tại). Nếu Prometheus cần scrape `/metrics`, phải thêm policy rõ ràng cho Prometheus.
-
-## 14. Deployment
-
-Sau khi hoàn tất GitHub bootstrap, push `main` kích hoạt pipeline tự động. Có thể deploy có kiểm soát từ tang3:
-
-```bash
-export KUBECONFIG=/home/monitor/.kube/microservices-demo-deployer.config
-export IMAGE_REGISTRY=ghcr.io/<owner>/<repo>
+export IMAGE_REGISTRY=ghcr.io/kien-devops/app1
 export IMAGE_TAG=<full-git-sha>
+
 sh scripts/render-manifests.sh rendered
 kubectl apply -k rendered
 
@@ -288,38 +446,63 @@ for app in frontend auth-service user-service product-service; do
 done
 ```
 
-## 15. Validation
+Không dùng `latest`. `IMAGE_TAG` phải là full Git SHA đã tồn tại trên GHCR.
+
+## 11. Kiểm tra sau deploy
+
+### Kubernetes resources
 
 ```bash
-kubectl get pods -n microservices-demo -o wide
-kubectl get deployments,svc,ingress -n microservices-demo
-kubectl get endpointslices -n microservices-demo
+kubectl get deployments,pods,services,endpointslices,ingress \
+  -n microservices-demo -o wide
+```
 
+Kết quả mong đợi:
+
+- frontend `2/2` Ready;
+- ba backend `1/1` Ready;
+- tất cả Pod `Running`;
+- mỗi Service có EndpointSlice;
+- Ingress nhận host `app1.onprem.site`.
+
+### Internal route
+
+```bash
 curl -H 'Host: app1.onprem.site' http://192.168.30.45/
 curl -H 'Host: app1.onprem.site' http://192.168.30.45/api/auth/health
 curl -H 'Host: app1.onprem.site' http://192.168.30.45/api/users/health
 curl -H 'Host: app1.onprem.site' http://192.168.30.45/api/products/health
+```
 
+### Public route
+
+```bash
 curl --fail https://app1.onprem.site/
 curl --fail https://app1.onprem.site/api/auth/health
 curl --fail https://app1.onprem.site/api/users/health
 curl --fail https://app1.onprem.site/api/products/health
 ```
 
-Chỉ coi public deployment là VERIFIED khi cả bốn request trả đúng nội dung.
+Chỉ coi release thành công khi rollout hoàn tất và cả bốn route trả HTTP `200`.
 
-## 16. Observability
+## 12. Logging, metrics và vận hành
 
 - Backend ghi JSON log gồm timestamp, service, path, status, latency và request ID.
 - NGINX ghi access/error log ra stdout/stderr.
-- Mỗi workload có health probes.
-- Backend có `/metrics` kiểu Prometheus trên Service nội bộ.
+- Kubernetes dùng `/health` làm readiness/liveness probe.
+- Backend expose `/metrics` theo Prometheus text format.
 
-Không tự động sửa Prometheus/Grafana hiện hữu. Khi tích hợp, dùng ServiceMonitor/PodMonitor nếu có operator hoặc thêm scrape config được review cùng NetworkPolicy allow rule.
+```bash
+kubectl logs -n microservices-demo deployment/auth-service --tail=100
+kubectl logs -n microservices-demo deployment/user-service --tail=100
+kubectl logs -n microservices-demo deployment/product-service --tail=100
+```
 
-## 17. Rollback
+NetworkPolicy chưa cho Prometheus scrape trực tiếp. Khi tích hợp Prometheus cần thêm allow rule rõ ràng.
 
-Rollback ReplicaSet gần nhất:
+## 13. Rollback
+
+Rollback nhanh một Deployment:
 
 ```bash
 kubectl rollout history deployment/frontend -n microservices-demo
@@ -327,37 +510,37 @@ kubectl rollout undo deployment/frontend -n microservices-demo
 kubectl rollout status deployment/frontend -n microservices-demo --timeout=180s
 ```
 
-Rollback đồng bộ bốn service nên redeploy một Git SHA cũ đã tồn tại trên GHCR:
+Rollback đồng bộ nên revert commit lỗi rồi chạy lại pipeline:
 
 ```bash
-export IMAGE_TAG=<known-good-full-git-sha>
-sh scripts/render-manifests.sh rendered
-kubectl apply -k rendered
+git revert <bad-commit-sha>
+git push origin main
 ```
 
-Không tự động rollback để tránh che giấu lỗi deploy. Pipeline dừng và giữ bằng chứng khi rollout fail.
+Cách này giữ lịch sử thay đổi rõ ràng và đảm bảo cả bốn component dùng một known-good Git SHA.
 
-## 18. Failure scenarios
+## 14. Troubleshooting
 
-| Failure | Biểu hiện | Hành động |
-| --- | --- | --- |
-| ImagePullBackOff | GHCR private/tag sai/network lỗi | kiểm tra image visibility, exact SHA và event |
-| Readiness fail | rollout timeout, old pods còn traffic | đọc pod logs/describe, sửa nhỏ nhất rồi redeploy |
-| 404 qua hostname | Ingress/Host mismatch | kiểm tra host `app1.onprem.site` và Traefik route |
-| 502/503 | Service không có ready endpoint | kiểm tra selector, EndpointSlice, probes |
-| API unavailable | runner không tới `:6443` | kiểm tra HAProxy rồi K3s API; không bypass bằng SSH tang2 |
-| Public 404 nhưng internal PASS | Cloudflare hostname route thiếu/sai | cấu hình tunnel `app1.onprem.site -> localhost:80` |
-
-## 19. Troubleshooting order
+Kiểm tra theo đúng luồng request:
 
 ```text
-Public DNS/Tunnel
-   -> HAProxy listener
-   -> Traefik Ingress
-   -> ClusterIP Service/EndpointSlice
-   -> Pod readiness
-   -> application logs
+DNS / Cloudflare Tunnel
+  → HAProxy
+  → Traefik Ingress
+  → ClusterIP Service
+  → EndpointSlice
+  → Pod readiness
+  → Application logs
 ```
+
+| Hiện tượng | Nguyên nhân thường gặp | Kiểm tra |
+| --- | --- | --- |
+| `404` | Hostname hoặc Ingress path sai | `kubectl describe ingress` |
+| `502/503` | Service không có ready endpoint | Selector, EndpointSlice, probes |
+| `ImagePullBackOff` | Image private hoặc SHA sai | Pod events và GHCR package |
+| Rollout timeout | Container crash hoặc probe fail | `kubectl describe pod`, logs |
+| Internal chạy, public lỗi | Cloudflare hostname/tunnel sai | cloudflared logs và mapping |
+| Runner không deploy | Runner offline, label/RBAC sai | Runner service và `auth can-i` |
 
 ```bash
 kubectl describe ingress microservices-demo -n microservices-demo
@@ -366,19 +549,25 @@ kubectl get events -n microservices-demo --sort-by=.lastTimestamp
 kubectl logs -n microservices-demo deployment/auth-service --tail=100
 ```
 
-Không sửa APT/filesystem trên tang2 và không reset/reinstall K3s để xử lý lỗi application.
+## 15. Bảo mật và giới hạn
 
-## 20. Security considerations
+Đã áp dụng:
 
-- Không commit kubeconfig, token, password, PAT hoặc `server.txt`.
-- Containers non-root, drop all capabilities, read-only root filesystem.
-- ServiceAccount token không mount vào application Pods.
-- CI permissions mặc định `contents: read`; chỉ image job có `packages: write`.
-- Self-hosted runner không chạy untrusted PR job.
-- Namespace-scoped RBAC tách deploy identity khỏi admin kubeconfig.
-- Same-origin API giảm CORS exposure; frontend bật CSP và response security headers.
-- Demo auth không phù hợp production; production cần IdP/OIDC, session protection, rate limiting và audit.
+- không commit `server.txt`, token, password, kubeconfig hoặc private key;
+- container non-root, read-only filesystem và không privilege escalation;
+- application Pod không mount ServiceAccount token;
+- default-deny NetworkPolicy;
+- namespace-scoped RBAC cho CI/CD;
+- self-hosted runner không chạy pull request job;
+- image được version bằng immutable Git SHA.
 
-## 21. Cost và operational complexity
+Giới hạn hiện tại:
 
-Project tái sử dụng K3s, Traefik, HAProxy và Cloudflare Tunnel hiện hữu. Chi phí cloud bổ sung gần như bằng không trong giới hạn GitHub/GHCR/Cloudflare phù hợp tài khoản. Đổi lại, single-node failure domains, runner patching, token rotation và image lifecycle là trách nhiệm vận hành của homelab owner.
+- Auth chỉ là demo, không dùng cho danh tính thật.
+- User và Product dùng dữ liệu tĩnh, chưa có database.
+- Một control plane và một worker nên chưa high availability.
+- Hai frontend replica vẫn cùng nằm trên `server-tang4`.
+- Deploy kubeconfig dùng long-lived token và cần rotate định kỳ.
+- Chưa có autoscaling, distributed tracing hoặc automated backup.
+
+Nếu phát triển thành production, cần bổ sung IdP/OIDC, database, secret management, rate limiting/WAF, centralized observability, nhiều control plane/worker, backup và disaster recovery.

@@ -21,3 +21,9 @@ test('nginx exposes an internal health endpoint and security headers', () => {
   assert.match(config, /Content-Security-Policy/);
   assert.match(config, /listen 8080/);
 });
+
+test('dashboard shows the automated delivery path', () => {
+  const markup = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(markup, /class="delivery-badge"/);
+  assert.match(markup, /GitHub Actions → GHCR → K3s/);
+});
