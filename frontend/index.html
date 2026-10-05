@@ -4,209 +4,279 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="On-premises microservices CI/CD platform running on a dedicated K3s control plane and worker">
-    <title>K3s On-Prem Platform Console</title>
-    <link rel="stylesheet" href="/styles.css">
+    <title>K3s Microservices Platform Console</title>
+    <link rel="stylesheet" href="/styles.css?v=2.0">
     <script src="/app.js" defer></script>
   </head>
   <body>
-    <!-- Top Navigation Bar -->
-    <header class="navbar">
-      <div class="nav-container">
-        <div class="nav-brand">
-          <div class="brand-logo" aria-hidden="true">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
-              <polyline points="2 17 12 22 22 17"></polyline>
-              <polyline points="2 12 12 17 22 12"></polyline>
+    <!-- Top Navigation Header -->
+    <header class="app-header">
+      <div class="header-inner">
+        <div class="brand">
+          <div class="brand-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+              <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+              <line x1="6" y1="6" x2="6.01" y2="6"></line>
+              <line x1="6" y1="18" x2="6.01" y2="18"></line>
             </svg>
           </div>
-          <div>
-            <span class="brand-title">K3s On-Prem Console</span>
-            <span class="brand-env">Cluster Production · app1.onprem.site</span>
+          <div class="brand-text">
+            <div class="brand-row">
+              <span class="brand-name">K3s App Portal</span>
+              <span class="cluster-badge">K3S CONTROL + WORKER</span>
+            </div>
+            <span class="brand-sub">app1.onprem.site · On-Premises Cluster</span>
           </div>
         </div>
 
-        <div class="nav-actions">
-          <div class="delivery-badge" aria-label="Triển khai tự động đang hoạt động">
+        <div class="header-controls">
+          <div class="delivery-badge" title="Tự động triển khai từ GitHub Actions đến cụm K3s">
             <span class="delivery-dot" aria-hidden="true"></span>
             <span>GitHub Actions → GHCR → K3s</span>
           </div>
-          <button id="refresh" type="button" class="btn btn-primary">
-            <svg class="refresh-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <button id="refresh" type="button" class="btn-refresh">
+            <svg class="icon-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19"/>
             </svg>
-            <span>Làm mới</span>
+            <span>Kiểm tra lại</span>
           </button>
         </div>
       </div>
     </header>
 
-    <main class="shell">
-      <!-- Infrastructure & Architecture Banner -->
-      <section class="infra-banner">
-        <div class="infra-header">
-          <p class="eyebrow">ON-PREMISES · K3S CONTROL + WORKER · CI/CD</p>
-          <div class="route-badge">
-            <span class="route-label">Route Ingress:</span>
+    <div class="app-layout">
+      <!-- Architecture & Ingress Route Banner -->
+      <section class="banner-card">
+        <div class="banner-top">
+          <div class="banner-title-group">
+            <span class="badge-tag">HẠ TẦNG MẠNG</span>
+            <p class="eyebrow">ON-PREMISES · K3S CONTROL + WORKER · CI/CD</p>
+          </div>
+          <div class="ingress-pill">
+            <span class="ingress-dot"></span>
+            <span class="ingress-label">Ingress Route:</span>
             <code>HAProxy tang3 → Traefik tang4</code>
           </div>
         </div>
-        <div class="node-topology">
-          <div class="node-chip">
-            <span class="node-role">Control Plane</span>
-            <strong>server-tang2</strong>
-            <span class="node-desc">K8s API & SQLite</span>
+
+        <div class="topology-grid">
+          <div class="topo-node">
+            <div class="node-badge">Control Plane</div>
+            <div class="node-name">server-tang2</div>
+            <div class="node-meta">K3s API · SQLite Datastore</div>
           </div>
-          <div class="node-arrow" aria-hidden="true">→</div>
-          <div class="node-chip">
-            <span class="node-role">Gateway & CI</span>
-            <strong>server-tang3</strong>
-            <span class="node-desc">HAProxy · Runner</span>
+          <div class="topo-connector">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 12h14M12 5l7 7-7 7"/>
+            </svg>
           </div>
-          <div class="node-arrow" aria-hidden="true">→</div>
-          <div class="node-chip node-highlight">
-            <span class="node-role">Worker Node</span>
-            <strong>server-tang4</strong>
-            <span class="node-desc">Traefik & 4 Services</span>
+          <div class="topo-node">
+            <div class="node-badge">Edge & Controller</div>
+            <div class="node-name">server-tang3</div>
+            <div class="node-meta">HAProxy · GitHub Runner</div>
+          </div>
+          <div class="topo-connector">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 12h14M12 5l7 7-7 7"/>
+            </svg>
+          </div>
+          <div class="topo-node topo-node-worker">
+            <div class="node-badge node-badge-worker">Worker Node</div>
+            <div class="node-name">server-tang4</div>
+            <div class="node-meta">Traefik Ingress · 4 Pods</div>
           </div>
         </div>
       </section>
 
       <!-- Services Health Section -->
-      <section class="section-container" aria-labelledby="service-heading">
-        <div class="section-heading">
-          <div class="heading-title-group">
-            <h2 id="service-heading">Trạng thái Microservices</h2>
-            <span class="badge-count">3 dịch vụ nội bộ</span>
+      <section class="section-block" aria-labelledby="service-heading">
+        <div class="section-header">
+          <div class="section-title-wrap">
+            <h2 id="service-heading">Microservices Health</h2>
+            <span class="count-tag">3 backend services</span>
           </div>
-          <span id="checked-at" class="timestamp" aria-live="polite">Đang kiểm tra…</span>
+          <span id="checked-at" class="last-checked" aria-live="polite">Đang kiểm tra…</span>
         </div>
 
-        <div class="service-grid">
-          <article class="card" data-service="auth">
-            <div class="card-header">
-              <span class="dot" aria-hidden="true"></span>
-              <div class="card-title-group">
+        <div class="service-cards-grid">
+          <!-- Auth Service -->
+          <article class="service-card" data-service="auth">
+            <div class="service-card-top">
+              <div class="service-icon-box">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+              </div>
+              <div class="service-title-area">
                 <strong>Auth Service</strong>
-                <span class="service-endpoint">/api/auth/*</span>
+                <span class="service-route">/api/auth/*</span>
               </div>
               <span class="status">CHECKING</span>
             </div>
-            <p class="card-desc">Xác thực phiên demo và cấp token đăng nhập người dùng.</p>
-            <div class="card-meta">
-              <span class="meta-item latency-text" data-latency="auth">Đang đo…</span>
-              <span class="meta-item">Port 8080 (ClusterIP)</span>
+            <p class="service-summary">Quản lý xác thực phiên demo và cấp bearer token đăng nhập.</p>
+            <div class="service-metrics-row">
+              <div class="metric-item">
+                <span class="metric-label">Độ trễ:</span>
+                <span class="metric-value" data-latency="auth">-- ms</span>
+              </div>
+              <div class="metric-item">
+                <span class="metric-label">Mạng:</span>
+                <span class="metric-value">Port 8080 (ClusterIP)</span>
+              </div>
             </div>
           </article>
 
-          <article class="card" data-service="users">
-            <div class="card-header">
-              <span class="dot" aria-hidden="true"></span>
-              <div class="card-title-group">
+          <!-- User Service -->
+          <article class="service-card" data-service="users">
+            <div class="service-card-top">
+              <div class="service-icon-box">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                  <circle cx="12" cy="7" r="4"></circle>
+                </svg>
+              </div>
+              <div class="service-title-area">
                 <strong>User Service</strong>
-                <span class="service-endpoint">/api/users/*</span>
+                <span class="service-route">/api/users/*</span>
               </div>
               <span class="status">CHECKING</span>
             </div>
-            <p class="card-desc">Quản lý hồ sơ tài khoản và phân quyền namespace.</p>
-            <div class="card-meta">
-              <span class="meta-item latency-text" data-latency="users">Đang đo…</span>
-              <span class="meta-item">Port 8080 (ClusterIP)</span>
+            <p class="service-summary">Quản lý thông tin hồ sơ người dùng và phân quyền namespace.</p>
+            <div class="service-metrics-row">
+              <div class="metric-item">
+                <span class="metric-label">Độ trễ:</span>
+                <span class="metric-value" data-latency="users">-- ms</span>
+              </div>
+              <div class="metric-item">
+                <span class="metric-label">Mạng:</span>
+                <span class="metric-value">Port 8080 (ClusterIP)</span>
+              </div>
             </div>
           </article>
 
-          <article class="card" data-service="products">
-            <div class="card-header">
-              <span class="dot" aria-hidden="true"></span>
-              <div class="card-title-group">
+          <!-- Product Service -->
+          <article class="service-card" data-service="products">
+            <div class="service-card-top">
+              <div class="service-icon-box">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="16.5" y1="9.4" x2="7.5" y2="4.21"></line>
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                  <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                  <line x1="12" y1="22.08" x2="12" y2="12"></line>
+                </svg>
+              </div>
+              <div class="service-title-area">
                 <strong>Product Service</strong>
-                <span class="service-endpoint">/api/products/*</span>
+                <span class="service-route">/api/products/*</span>
               </div>
               <span class="status">CHECKING</span>
             </div>
-            <p class="card-desc">Cung cấp danh mục gói tài nguyên và dịch vụ DevOps mẫu.</p>
-            <div class="card-meta">
-              <span class="meta-item latency-text" data-latency="products">Đang đo…</span>
-              <span class="meta-item">Port 8080 (ClusterIP)</span>
+            <p class="service-summary">Cung cấp danh mục gói dịch vụ hạ tầng và DevOps templates.</p>
+            <div class="service-metrics-row">
+              <div class="metric-item">
+                <span class="metric-label">Độ trễ:</span>
+                <span class="metric-value" data-latency="products">-- ms</span>
+              </div>
+              <div class="metric-item">
+                <span class="metric-label">Mạng:</span>
+                <span class="metric-value">Port 8080 (ClusterIP)</span>
+              </div>
             </div>
           </article>
         </div>
       </section>
 
-      <!-- Details Section: Profile & Products -->
-      <section class="detail-grid">
-        <!-- User & Auth Testing Panel -->
-        <article class="panel">
-          <div class="panel-header">
-            <p class="panel-label">HỒ SƠ & PHIÊN LÀM VIỆC</p>
-            <span class="status-pill status-pill-active" id="auth-status-pill">Active</span>
+      <!-- Main Two-Column Panels: Profile & Products -->
+      <section class="panels-grid">
+        <!-- User & Session Panel -->
+        <article class="dashboard-panel">
+          <div class="panel-head">
+            <div class="panel-head-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <circle cx="12" cy="10" r="3"></circle>
+                <path d="M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662"></path>
+              </svg>
+              <h3 class="panel-label">HỒ SƠ & PHIÊN LÀM VIỆC</h3>
+            </div>
+            <span class="badge-online">Đang hoạt động</span>
           </div>
 
-          <div class="user-profile-box">
-            <div class="user-avatar" id="user-avatar" aria-hidden="true">DU</div>
-            <div class="user-info">
-              <h3 id="user-name">Đang tải…</h3>
-              <p id="user-meta" class="muted"></p>
-            </div>
-          </div>
-
-          <div class="user-attributes" id="user-extra-attributes">
-            <div class="attr-chip">
-              <span class="attr-label">Namespace:</span>
-              <span class="attr-value" id="attr-namespace">microservices-demo</span>
-            </div>
-            <div class="attr-chip">
-              <span class="attr-label">Node:</span>
-              <span class="attr-value" id="attr-node">server-tang4</span>
-            </div>
-            <div class="attr-chip">
-              <span class="attr-label">RBAC:</span>
-              <span class="attr-value" id="attr-rbac">Role-Scoped</span>
+          <div class="profile-card">
+            <div class="profile-avatar" id="user-avatar" aria-hidden="true">DU</div>
+            <div class="profile-info">
+              <h4 id="user-name">Đang tải…</h4>
+              <p id="user-meta" class="profile-meta-text">Đang kết nối User Service…</p>
             </div>
           </div>
 
-          <hr class="panel-divider">
+          <div class="env-chips">
+            <div class="env-chip">
+              <span class="env-label">Namespace</span>
+              <strong id="attr-namespace">microservices-demo</strong>
+            </div>
+            <div class="env-chip">
+              <span class="env-label">Cluster Node</span>
+              <strong id="attr-node">server-tang4</strong>
+            </div>
+            <div class="env-chip">
+              <span class="env-label">Bảo mật Pod</span>
+              <strong>Non-Root / ReadOnly</strong>
+            </div>
+          </div>
 
-          <!-- Interactive Auth Test -->
-          <div class="auth-test-section">
-            <label for="login-username" class="input-label">Kiểm thử API Đăng nhập (/api/auth/login)</label>
-            <form id="auth-login-form" class="auth-form" autocomplete="off">
-              <div class="input-group">
+          <!-- Auth API Interactive Tester -->
+          <div class="auth-tester-box">
+            <div class="tester-head">
+              <span class="tester-title">Kiểm thử API Xác thực</span>
+              <code>POST /api/auth/login</code>
+            </div>
+            <form id="auth-login-form" class="tester-form" autocomplete="off">
+              <div class="input-wrap">
                 <input type="text" id="login-username" name="username" placeholder="Nhập username (vd: admin, devops)" value="devops-engineer" required>
-                <button type="submit" id="btn-login" class="btn btn-secondary">Đăng nhập</button>
+                <button type="submit" id="btn-login" class="btn-action">Đăng nhập</button>
               </div>
             </form>
-            <div id="auth-result-box" class="auth-result hidden" aria-live="polite"></div>
+            <div id="auth-result-box" class="auth-response-box hidden" aria-live="polite"></div>
           </div>
         </article>
 
         <!-- Product Catalogue Panel -->
-        <article class="panel products-panel">
-          <div class="panel-header">
-            <div class="heading-title-group">
-              <p class="panel-label">DANH MỤC GÓI DỊCH VỤ DEVOPS</p>
+        <article class="dashboard-panel">
+          <div class="panel-head">
+            <div class="panel-head-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                <polyline points="2 17 12 22 22 17"></polyline>
+                <polyline points="2 12 12 17 22 12"></polyline>
+              </svg>
+              <h3 class="panel-label">DANH MỤC GÓI DỊCH VỤ DEVOPS</h3>
             </div>
-            <span class="badge-count" id="product-count">3 packages</span>
+            <span class="badge-count" id="product-count">3 Gói sẵn sàng</span>
           </div>
-          <p class="panel-sub">Dữ liệu trả về trực tiếp từ Product Service thông qua Traefik Ingress.</p>
-          <div id="products" class="products">
-            <p class="muted">Đang tải dữ liệu từ cluster…</p>
+
+          <div id="products" class="products-grid">
+            <div class="loading-state">
+              <div class="spinner"></div>
+              <span>Đang tải danh mục từ Product Service…</span>
+            </div>
           </div>
         </article>
       </section>
 
-      <!-- System Health Bar & Footer -->
-      <footer class="system-footer">
-        <div class="footer-routing">
-          <span class="routing-dot" aria-hidden="true"></span>
+      <!-- System Footer -->
+      <footer class="app-footer">
+        <div class="footer-left">
+          <span class="pulse-indicator" aria-hidden="true"></span>
           <span>Internet → Cloudflare → HAProxy tang3 → Traefik tang4 → ClusterIP · RollingUpdate enabled</span>
         </div>
-        <div class="footer-status">
-          <span class="status-title">Hệ thống:</span>
+        <div class="footer-right">
+          <span class="footer-label">Trạng thái cụm:</span>
           <span id="overall" class="overall">INITIALIZING</span>
         </div>
       </footer>
-    </main>
+    </div>
   </body>
 </html>
-
