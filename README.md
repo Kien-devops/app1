@@ -94,10 +94,10 @@ Ba backend chỉ dùng `ClusterIP`, không expose trực tiếp ra Internet. Tra
 | --- | --- |
 | `server-tang2` | K3s control plane, Kubernetes API và SQLite datastore |
 | `server-tang3` | Ansible controller, HAProxy, cloudflared, monitoring, self-hosted GitHub runner và deploy kubeconfig |
-| `server-tang4` | K3s ingress worker chạy Traefik, ServiceLB và một replica của mỗi application Deployment |
-| `server-tang1` | K3s compute worker chạy replica application còn lại |
+| `server-tang4` | K3s ingress/application worker chạy Traefik, ServiceLB và một replica của mỗi Deployment |
+| `server-tang1` | K3s ingress/application worker chạy Traefik, ServiceLB và một replica của mỗi Deployment |
 
-Đây chưa phải Kubernetes High Availability hoàn chỉnh: tang2 là control plane duy nhất, tang4 vẫn là ingress worker duy nhất và tang3 là edge duy nhất. Application Pods được phân tán trên tang1/tang4 để giảm ảnh hưởng khi một compute worker lỗi.
+Đây chưa phải Kubernetes High Availability hoàn chỉnh: tang2 là control plane duy nhất và tang3 là edge/HAProxy duy nhất. Ingress và application Pods được phân tán trên tang1/tang4 để tiếp tục phục vụ khi một worker lỗi.
 
 ### Quan hệ với repository `k3s-onprem`
 
@@ -256,7 +256,7 @@ NGINX frontend chỉ serve static files. Việc route `/api/...` đến backend 
 | `network-policy.yaml` | Default deny và chỉ cho traffic tin cậy từ `kube-system`. |
 | `kustomization.yaml` | Gom manifest, đặt namespace và common labels. |
 
-Các Deployment đều có readiness/liveness probe, resource requests/limits, RollingUpdate, non-root user, seccomp, read-only root filesystem và drop Linux capabilities. `topologySpreadConstraints` với `DoNotSchedule` bắt buộc cân bằng một replica trên mỗi worker; khi chỉ còn một worker khả dụng, replica thứ hai có thể ở trạng thái `Pending` thay vì phá vỡ failure-domain isolation.
+Các Deployment đều có readiness/liveness probe, resource requests/limits, RollingUpdate, non-root user, seccomp, read-only root filesystem và drop Linux capabilities. `topologySpreadConstraints` với `DoNotSchedule` bắt buộc cân bằng một replica trên mỗi worker; `maxSurge: 0` và `maxUnavailable: 1` ngăn Pod cũ làm sai lệch topology khi rollout. Khi chỉ còn một worker khả dụng, replica thứ hai có thể ở trạng thái `Pending` thay vì phá vỡ failure-domain isolation.
 
 ### `k8s/bootstrap/` và `scripts/`
 
@@ -595,9 +595,9 @@ Giới hạn hiện tại:
 
 - Auth chỉ là demo, không dùng cho danh tính thật.
 - User và Product dùng dữ liệu tĩnh, chưa có database.
-- Một control plane, một ingress worker và một edge node vẫn là các single point of failure. Nếu tang2 lỗi thì API/SQLite và khả năng reconcile mất; nếu tang4 lỗi thì ingress mất dù application replica trên tang1 có thể vẫn chạy.
+- Một control plane và một edge node vẫn là các single point of failure. Nếu tang2 lỗi thì API/SQLite và khả năng reconcile mất; nếu tang3 lỗi thì public edge và HAProxy mất.
 - Nếu tang3 lỗi, cluster vẫn chạy nội bộ nhưng stable API endpoint, Cloudflare Tunnel và public application route bị gián đoạn.
-- Mỗi Deployment có hai replica và ưu tiên phân tán một Pod trên tang1, một Pod trên tang4; đây là workload redundancy, không thay thế control-plane/ingress HA.
+- Mỗi Deployment có hai replica và bắt buộc phân tán một Pod trên tang1, một Pod trên tang4; cùng với hai Traefik/ServiceLB replica, thiết kế này chịu được lỗi một worker nhưng không thay thế control-plane/edge HA.
 - Deploy kubeconfig dùng long-lived token và cần rotate định kỳ.
 - Chưa có autoscaling, distributed tracing hoặc automated backup.
 
