@@ -26,6 +26,6 @@ test('dashboard shows the automated delivery path', () => {
   const markup = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.match(markup, /class="delivery-badge"/);
   assert.match(markup, /GitHub Actions → GHCR → K3s/);
-  assert.match(markup, /SINGLE-NODE K3S/);
+  assert.match(markup, /K3S CONTROL \+ WORKER/);
   assert.match(markup, /HAProxy tang3 → Traefik tang4/);
 });
