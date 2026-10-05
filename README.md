@@ -94,9 +94,10 @@ Ba backend chỉ dùng `ClusterIP`, không expose trực tiếp ra Internet. Tra
 | --- | --- |
 | `server-tang2` | K3s control plane, Kubernetes API và SQLite datastore |
 | `server-tang3` | Ansible controller, HAProxy, cloudflared, monitoring, self-hosted GitHub runner và deploy kubeconfig |
-| `server-tang4` | K3s worker chạy Traefik, ServiceLB và toàn bộ application workload |
+| `server-tang4` | K3s ingress worker chạy Traefik, ServiceLB và một replica của mỗi application Deployment |
+| `server-tang1` | K3s compute worker chạy replica application còn lại |
 
-Đây không phải Kubernetes High Availability: tang2 là control plane duy nhất và tang4 là worker duy nhất. Tang3 cung cấp stable API/application entry point nhưng không phải thành viên K3s cluster.
+Đây chưa phải Kubernetes High Availability hoàn chỉnh: tang2 là control plane duy nhất, tang4 vẫn là ingress worker duy nhất và tang3 là edge duy nhất. Application Pods được phân tán trên tang1/tang4 để giảm ảnh hưởng khi một compute worker lỗi.
 
 ### Quan hệ với repository `k3s-onprem`
 
@@ -104,8 +105,8 @@ Ba backend chỉ dùng `ClusterIP`, không expose trực tiếp ra Internet. Tra
 
 ```text
 k3s-onprem
-  -> quản lý server-tang2 / tang3 / tang4
-  -> cài K3s control plane trên tang2 và worker trên tang4
+  -> quản lý server-tang1 / tang2 / tang3 / tang4
+  -> cài K3s control plane trên tang2 và workers trên tang1/tang4
   -> cấu hình HAProxy, ServiceLB và Traefik
   -> kiểm tra cluster và ingress data path
                     |
@@ -247,15 +248,15 @@ NGINX frontend chỉ serve static files. Việc route `/api/...` đến backend 
 
 | File | Chức năng |
 | --- | --- |
-| `frontend.yaml` | Deployment 2 replicas và ClusterIP Service cho frontend. |
-| `auth-service.yaml` | Deployment và Service cho Auth API. |
-| `user-service.yaml` | Deployment và Service cho User API. |
-| `product-service.yaml` | Deployment và Service cho Product API. |
+| `frontend.yaml` | Deployment 2 replicas phân tán theo node và ClusterIP Service cho frontend. |
+| `auth-service.yaml` | Deployment 2 replicas phân tán theo node và Service cho Auth API. |
+| `user-service.yaml` | Deployment 2 replicas phân tán theo node và Service cho User API. |
+| `product-service.yaml` | Deployment 2 replicas phân tán theo node và Service cho Product API. |
 | `ingress.yaml` | Route hostname và API path đến đúng Service. |
 | `network-policy.yaml` | Default deny và chỉ cho traffic tin cậy từ `kube-system`. |
 | `kustomization.yaml` | Gom manifest, đặt namespace và common labels. |
 
-Các Deployment đều có readiness/liveness probe, resource requests/limits, RollingUpdate, non-root user, seccomp, read-only root filesystem và drop Linux capabilities.
+Các Deployment đều có readiness/liveness probe, resource requests/limits, RollingUpdate, non-root user, seccomp, read-only root filesystem và drop Linux capabilities. `topologySpreadConstraints` ưu tiên cân bằng một replica trên mỗi worker; `ScheduleAnyway` cho phép dồn replica sang worker còn sống khi một worker không khả dụng.
 
 ### `k8s/bootstrap/` và `scripts/`
 
@@ -301,7 +302,7 @@ Thông số của môi trường hiện tại:
 | Hostname | `app1.onprem.site` |
 | K3s API qua HAProxy | `https://192.168.30.45:6443` |
 | K3s control plane | `server-tang2` |
-| K3s workload node | `server-tang4` |
+| K3s application workers | `server-tang1`, `server-tang4` |
 | Runner label | `k3s-deploy` |
 
 ## 7. Setup và chạy local
@@ -594,9 +595,9 @@ Giới hạn hiện tại:
 
 - Auth chỉ là demo, không dùng cho danh tính thật.
 - User và Product dùng dữ liệu tĩnh, chưa có database.
-- Một control plane và một worker nên chưa high availability; nếu tang2 lỗi thì API/SQLite và khả năng reconcile mất, còn nếu tang4 lỗi thì toàn bộ application/Ingress mất.
+- Một control plane, một ingress worker và một edge node vẫn là các single point of failure. Nếu tang2 lỗi thì API/SQLite và khả năng reconcile mất; nếu tang4 lỗi thì ingress mất dù application replica trên tang1 có thể vẫn chạy.
 - Nếu tang3 lỗi, cluster vẫn chạy nội bộ nhưng stable API endpoint, Cloudflare Tunnel và public application route bị gián đoạn.
-- Hai frontend replica vẫn cùng nằm trên `server-tang4`.
+- Mỗi Deployment có hai replica và ưu tiên phân tán một Pod trên tang1, một Pod trên tang4; đây là workload redundancy, không thay thế control-plane/ingress HA.
 - Deploy kubeconfig dùng long-lived token và cần rotate định kỳ.
 - Chưa có autoscaling, distributed tracing hoặc automated backup.
 

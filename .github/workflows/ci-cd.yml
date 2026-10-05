@@ -129,6 +129,25 @@ jobs:
           for deployment in frontend auth-service user-service product-service; do
             kubectl rollout status "deployment/$deployment" -n microservices-demo --timeout=180s
           done
+      - name: Verify replicas are distributed across workers
+        env:
+          KUBECONFIG: /home/monitor/.kube/microservices-demo-deployer.config
+        shell: bash
+        run: |
+          for deployment in frontend auth-service user-service product-service; do
+            available="$(kubectl get deployment "$deployment" -n microservices-demo \
+              -o jsonpath='{.status.availableReplicas}')"
+            placements="$(kubectl get pods -n microservices-demo \
+              -l "app.kubernetes.io/name=$deployment" \
+              -o go-template='{{range .items}}{{if not .metadata.deletionTimestamp}}{{.spec.nodeName}}{{"\n"}}{{end}}{{end}}')"
+            pod_count="$(printf '%s\n' "$placements" | sed '/^$/d' | wc -l | tr -d ' ')"
+            node_count="$(printf '%s\n' "$placements" | sed '/^$/d' | sort -u | wc -l | tr -d ' ')"
+
+            test "$available" = "2"
+            test "$pod_count" = "2"
+            test "$node_count" = "2"
+            printf '%s: two available replicas across nodes:\n%s\n' "$deployment" "$placements"
+          done
       - name: Validate service routes through HAProxy and Traefik
         shell: bash
         run: |
