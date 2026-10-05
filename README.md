@@ -256,7 +256,7 @@ NGINX frontend chỉ serve static files. Việc route `/api/...` đến backend 
 | `network-policy.yaml` | Default deny và chỉ cho traffic tin cậy từ `kube-system`. |
 | `kustomization.yaml` | Gom manifest, đặt namespace và common labels. |
 
-Các Deployment đều có readiness/liveness probe, resource requests/limits, RollingUpdate, non-root user, seccomp, read-only root filesystem và drop Linux capabilities. `topologySpreadConstraints` ưu tiên cân bằng một replica trên mỗi worker; `ScheduleAnyway` cho phép dồn replica sang worker còn sống khi một worker không khả dụng.
+Các Deployment đều có readiness/liveness probe, resource requests/limits, RollingUpdate, non-root user, seccomp, read-only root filesystem và drop Linux capabilities. `topologySpreadConstraints` với `DoNotSchedule` bắt buộc cân bằng một replica trên mỗi worker; khi chỉ còn một worker khả dụng, replica thứ hai có thể ở trạng thái `Pending` thay vì phá vỡ failure-domain isolation.
 
 ### `k8s/bootstrap/` và `scripts/`
 

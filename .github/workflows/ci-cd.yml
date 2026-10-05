@@ -143,10 +143,11 @@ jobs:
             pod_count="$(printf '%s\n' "$placements" | sed '/^$/d' | wc -l | tr -d ' ')"
             node_count="$(printf '%s\n' "$placements" | sed '/^$/d' | sort -u | wc -l | tr -d ' ')"
 
+            printf '%s: available=%s pods=%s nodes=%s\n%s\n' \
+              "$deployment" "$available" "$pod_count" "$node_count" "$placements"
             test "$available" = "2"
             test "$pod_count" = "2"
             test "$node_count" = "2"
-            printf '%s: two available replicas across nodes:\n%s\n' "$deployment" "$placements"
           done
       - name: Validate service routes through HAProxy and Traefik
         shell: bash
