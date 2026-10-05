@@ -4,65 +4,209 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="On-premises microservices CI/CD platform running on a dedicated K3s control plane and worker">
-    <title>On-Prem Microservices Platform</title>
+    <title>K3s On-Prem Platform Console</title>
     <link rel="stylesheet" href="/styles.css">
     <script src="/app.js" defer></script>
   </head>
   <body>
-    <main class="shell">
-      <header class="hero">
-        <div>
-          <p class="eyebrow">ON-PREMISES · K3S CONTROL + WORKER · CI/CD</p>
-          <h1>On-Prem Microservices Platform</h1>
-          <p class="subtitle">Bốn service triển khai độc lập trên tang4, đi qua một same-origin route được bảo vệ bởi Traefik.</p>
+    <!-- Top Navigation Bar -->
+    <header class="navbar">
+      <div class="nav-container">
+        <div class="nav-brand">
+          <div class="brand-logo" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+              <polyline points="2 17 12 22 22 17"></polyline>
+              <polyline points="2 12 12 17 22 12"></polyline>
+            </svg>
+          </div>
+          <div>
+            <span class="brand-title">K3s On-Prem Console</span>
+            <span class="brand-env">Cluster Production · app1.onprem.site</span>
+          </div>
+        </div>
+
+        <div class="nav-actions">
           <div class="delivery-badge" aria-label="Triển khai tự động đang hoạt động">
             <span class="delivery-dot" aria-hidden="true"></span>
             <span>GitHub Actions → GHCR → K3s</span>
           </div>
+          <button id="refresh" type="button" class="btn btn-primary">
+            <svg class="refresh-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19"/>
+            </svg>
+            <span>Làm mới</span>
+          </button>
         </div>
-        <button id="refresh" type="button">Kiểm tra lại</button>
-      </header>
+      </div>
+    </header>
 
-      <section aria-labelledby="service-heading">
-        <div class="section-heading">
-          <h2 id="service-heading">Service health</h2>
-          <span id="checked-at" aria-live="polite">Đang kiểm tra…</span>
+    <main class="shell">
+      <!-- Infrastructure & Architecture Banner -->
+      <section class="infra-banner">
+        <div class="infra-header">
+          <p class="eyebrow">ON-PREMISES · K3S CONTROL + WORKER · CI/CD</p>
+          <div class="route-badge">
+            <span class="route-label">Route Ingress:</span>
+            <code>HAProxy tang3 → Traefik tang4</code>
+          </div>
         </div>
+        <div class="node-topology">
+          <div class="node-chip">
+            <span class="node-role">Control Plane</span>
+            <strong>server-tang2</strong>
+            <span class="node-desc">K8s API & SQLite</span>
+          </div>
+          <div class="node-arrow" aria-hidden="true">→</div>
+          <div class="node-chip">
+            <span class="node-role">Gateway & CI</span>
+            <strong>server-tang3</strong>
+            <span class="node-desc">HAProxy · Runner</span>
+          </div>
+          <div class="node-arrow" aria-hidden="true">→</div>
+          <div class="node-chip node-highlight">
+            <span class="node-role">Worker Node</span>
+            <strong>server-tang4</strong>
+            <span class="node-desc">Traefik & 4 Services</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Services Health Section -->
+      <section class="section-container" aria-labelledby="service-heading">
+        <div class="section-heading">
+          <div class="heading-title-group">
+            <h2 id="service-heading">Trạng thái Microservices</h2>
+            <span class="badge-count">3 dịch vụ nội bộ</span>
+          </div>
+          <span id="checked-at" class="timestamp" aria-live="polite">Đang kiểm tra…</span>
+        </div>
+
         <div class="service-grid">
           <article class="card" data-service="auth">
-            <span class="dot" aria-hidden="true"></span>
-            <div><strong>Auth Service</strong><p>Demo session và login endpoint</p></div>
-            <span class="status">CHECKING</span>
+            <div class="card-header">
+              <span class="dot" aria-hidden="true"></span>
+              <div class="card-title-group">
+                <strong>Auth Service</strong>
+                <span class="service-endpoint">/api/auth/*</span>
+              </div>
+              <span class="status">CHECKING</span>
+            </div>
+            <p class="card-desc">Xác thực phiên demo và cấp token đăng nhập người dùng.</p>
+            <div class="card-meta">
+              <span class="meta-item latency-text" data-latency="auth">Đang đo…</span>
+              <span class="meta-item">Port 8080 (ClusterIP)</span>
+            </div>
           </article>
+
           <article class="card" data-service="users">
-            <span class="dot" aria-hidden="true"></span>
-            <div><strong>User Service</strong><p>Thông tin profile người dùng</p></div>
-            <span class="status">CHECKING</span>
+            <div class="card-header">
+              <span class="dot" aria-hidden="true"></span>
+              <div class="card-title-group">
+                <strong>User Service</strong>
+                <span class="service-endpoint">/api/users/*</span>
+              </div>
+              <span class="status">CHECKING</span>
+            </div>
+            <p class="card-desc">Quản lý hồ sơ tài khoản và phân quyền namespace.</p>
+            <div class="card-meta">
+              <span class="meta-item latency-text" data-latency="users">Đang đo…</span>
+              <span class="meta-item">Port 8080 (ClusterIP)</span>
+            </div>
           </article>
+
           <article class="card" data-service="products">
-            <span class="dot" aria-hidden="true"></span>
-            <div><strong>Product Service</strong><p>Danh mục sản phẩm mẫu</p></div>
-            <span class="status">CHECKING</span>
+            <div class="card-header">
+              <span class="dot" aria-hidden="true"></span>
+              <div class="card-title-group">
+                <strong>Product Service</strong>
+                <span class="service-endpoint">/api/products/*</span>
+              </div>
+              <span class="status">CHECKING</span>
+            </div>
+            <p class="card-desc">Cung cấp danh mục gói tài nguyên và dịch vụ DevOps mẫu.</p>
+            <div class="card-meta">
+              <span class="meta-item latency-text" data-latency="products">Đang đo…</span>
+              <span class="meta-item">Port 8080 (ClusterIP)</span>
+            </div>
           </article>
         </div>
       </section>
 
+      <!-- Details Section: Profile & Products -->
       <section class="detail-grid">
+        <!-- User & Auth Testing Panel -->
         <article class="panel">
-          <p class="panel-label">CURRENT USER</p>
-          <h2 id="user-name">Đang tải…</h2>
-          <p id="user-meta" class="muted"></p>
+          <div class="panel-header">
+            <p class="panel-label">HỒ SƠ & PHIÊN LÀM VIỆC</p>
+            <span class="status-pill status-pill-active" id="auth-status-pill">Active</span>
+          </div>
+
+          <div class="user-profile-box">
+            <div class="user-avatar" id="user-avatar" aria-hidden="true">DU</div>
+            <div class="user-info">
+              <h3 id="user-name">Đang tải…</h3>
+              <p id="user-meta" class="muted"></p>
+            </div>
+          </div>
+
+          <div class="user-attributes" id="user-extra-attributes">
+            <div class="attr-chip">
+              <span class="attr-label">Namespace:</span>
+              <span class="attr-value" id="attr-namespace">microservices-demo</span>
+            </div>
+            <div class="attr-chip">
+              <span class="attr-label">Node:</span>
+              <span class="attr-value" id="attr-node">server-tang4</span>
+            </div>
+            <div class="attr-chip">
+              <span class="attr-label">RBAC:</span>
+              <span class="attr-value" id="attr-rbac">Role-Scoped</span>
+            </div>
+          </div>
+
+          <hr class="panel-divider">
+
+          <!-- Interactive Auth Test -->
+          <div class="auth-test-section">
+            <label for="login-username" class="input-label">Kiểm thử API Đăng nhập (/api/auth/login)</label>
+            <form id="auth-login-form" class="auth-form" autocomplete="off">
+              <div class="input-group">
+                <input type="text" id="login-username" name="username" placeholder="Nhập username (vd: admin, devops)" value="devops-engineer" required>
+                <button type="submit" id="btn-login" class="btn btn-secondary">Đăng nhập</button>
+              </div>
+            </form>
+            <div id="auth-result-box" class="auth-result hidden" aria-live="polite"></div>
+          </div>
         </article>
+
+        <!-- Product Catalogue Panel -->
         <article class="panel products-panel">
-          <p class="panel-label">PRODUCT CATALOGUE</p>
-          <div id="products" class="products"><p class="muted">Đang tải…</p></div>
+          <div class="panel-header">
+            <div class="heading-title-group">
+              <p class="panel-label">DANH MỤC GÓI DỊCH VỤ DEVOPS</p>
+            </div>
+            <span class="badge-count" id="product-count">3 packages</span>
+          </div>
+          <p class="panel-sub">Dữ liệu trả về trực tiếp từ Product Service thông qua Traefik Ingress.</p>
+          <div id="products" class="products">
+            <p class="muted">Đang tải dữ liệu từ cluster…</p>
+          </div>
         </article>
       </section>
 
-      <footer>
-        <span>Internet → Cloudflare → HAProxy tang3 → Traefik tang4 → ClusterIP · RollingUpdate enabled</span>
-        <span id="overall" class="overall">INITIALIZING</span>
+      <!-- System Health Bar & Footer -->
+      <footer class="system-footer">
+        <div class="footer-routing">
+          <span class="routing-dot" aria-hidden="true"></span>
+          <span>Internet → Cloudflare → HAProxy tang3 → Traefik tang4 → ClusterIP · RollingUpdate enabled</span>
+        </div>
+        <div class="footer-status">
+          <span class="status-title">Hệ thống:</span>
+          <span id="overall" class="overall">INITIALIZING</span>
+        </div>
       </footer>
     </main>
   </body>
 </html>
+

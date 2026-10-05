@@ -15,6 +15,11 @@ const handler = createHttpService({
         displayName: 'K3s Demo User',
         email: 'demo@example.invalid',
         roles: ['viewer'],
+        department: 'Platform Engineering',
+        namespace: 'microservices-demo',
+        permissionScope: 'namespace-scoped',
+        clusterNode: 'server-tang4',
+        status: 'Active',
       },
     }),
   },
@@ -23,3 +28,4 @@ const handler = createHttpService({
 if (require.main === module) startServer(handler, serviceName);
 
 module.exports = { handler };
+
