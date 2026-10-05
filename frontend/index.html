@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="K3s microservices CI/CD demonstration">
-    <title>K3s Microservices Demo</title>
+    <meta name="description" content="On-premises microservices CI/CD platform running on single-node K3s">
+    <title>On-Prem Microservices Platform</title>
     <link rel="stylesheet" href="/styles.css">
     <script src="/app.js" defer></script>
   </head>
@@ -12,9 +12,9 @@
     <main class="shell">
       <header class="hero">
         <div>
-          <p class="eyebrow">ON-PREMISES · K3S · CI/CD</p>
-          <h1>K3s Microservices Demo</h1>
-          <p class="subtitle">Một public endpoint, bốn workload độc lập, routing bởi Traefik.</p>
+          <p class="eyebrow">ON-PREMISES · SINGLE-NODE K3S · CI/CD</p>
+          <h1>On-Prem Microservices Platform</h1>
+          <p class="subtitle">Bốn service triển khai độc lập trên tang4, đi qua một same-origin route được bảo vệ bởi Traefik.</p>
           <div class="delivery-badge" aria-label="Triển khai tự động đang hoạt động">
             <span class="delivery-dot" aria-hidden="true"></span>
             <span>GitHub Actions → GHCR → K3s</span>
@@ -60,7 +60,7 @@
       </section>
 
       <footer>
-        <span>Internet → Cloudflare → HAProxy → Traefik → ClusterIP · RollingUpdate enabled</span>
+        <span>Internet → Cloudflare → HAProxy tang3 → Traefik tang4 → ClusterIP · RollingUpdate enabled</span>
         <span id="overall" class="overall">INITIALIZING</span>
       </footer>
     </main>

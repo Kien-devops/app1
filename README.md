@@ -92,9 +92,10 @@ Ba backend chỉ dùng `ClusterIP`, không expose trực tiếp ra Internet. Tra
 
 | Server | Vai trò |
 | --- | --- |
-| `server-tang2` | K3s control plane và Kubernetes API |
-| `server-tang3` | HAProxy, cloudflared, self-hosted GitHub runner và deploy kubeconfig |
-| `server-tang4` | K3s worker chạy frontend, backend và Traefik |
+| `server-tang3` | Ansible controller, HAProxy, cloudflared, monitoring, self-hosted GitHub runner và deploy kubeconfig |
+| `server-tang4` | Single-node K3s server: control plane, SQLite datastore, Traefik, ServiceLB và toàn bộ application workload |
+
+Đây không phải Kubernetes High Availability. Tang4 vừa giữ control plane/datastore vừa chạy workload; tang3 cung cấp stable API và application entry point nhưng không phải thành viên K3s cluster.
 
 ### Quan hệ với repository `k3s-onprem`
 
@@ -102,8 +103,8 @@ Ba backend chỉ dùng `ClusterIP`, không expose trực tiếp ra Internet. Tra
 
 ```text
 k3s-onprem
-  -> dựng server-tang2 / tang3 / tang4
-  -> cài K3s control plane và worker
+  -> quản lý server-tang3 và server-tang4
+  -> cài single-node K3s server schedulable trên tang4
   -> cấu hình HAProxy, ServiceLB và Traefik
   -> kiểm tra cluster và ingress data path
                     |
@@ -298,7 +299,7 @@ Thông số của môi trường hiện tại:
 | Namespace | `microservices-demo` |
 | Hostname | `app1.onprem.site` |
 | K3s API qua HAProxy | `https://192.168.30.45:6443` |
-| Worker | `server-tang4` |
+| K3s server / workload node | `server-tang4` |
 | Runner label | `k3s-deploy` |
 
 ## 7. Setup và chạy local
@@ -591,7 +592,8 @@ Giới hạn hiện tại:
 
 - Auth chỉ là demo, không dùng cho danh tính thật.
 - User và Product dùng dữ liệu tĩnh, chưa có database.
-- Một control plane và một worker nên chưa high availability.
+- Một single-node K3s server nên chưa high availability; nếu tang4 lỗi thì control plane, SQLite datastore và toàn bộ application đều mất.
+- Nếu tang3 lỗi, K3s trên tang4 vẫn chạy nhưng stable API endpoint, Cloudflare Tunnel và public application route bị gián đoạn.
 - Hai frontend replica vẫn cùng nằm trên `server-tang4`.
 - Deploy kubeconfig dùng long-lived token và cần rotate định kỳ.
 - Chưa có autoscaling, distributed tracing hoặc automated backup.
