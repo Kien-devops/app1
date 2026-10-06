@@ -1,0 +1,214 @@
+name: deploy-service
+
+on:
+  workflow_call:
+    inputs:
+      frontend:
+        required: true
+        type: boolean
+      auth:
+        required: true
+        type: boolean
+      user:
+        required: true
+        type: boolean
+      product:
+        required: true
+        type: boolean
+      platform:
+        required: true
+        type: boolean
+      frontend_image_published:
+        required: true
+        type: boolean
+      auth_image_published:
+        required: true
+        type: boolean
+      user_image_published:
+        required: true
+        type: boolean
+      product_image_published:
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy selected resources
+    runs-on: [self-hosted, Linux, X64, k3s-deploy]
+    environment: production
+    timeout-minutes: 10
+    env:
+      KUBECONFIG: /home/monitor/.kube/microservices-demo-deployer.config
+      NAMESPACE: microservices-demo
+      DEPLOY_FRONTEND: ${{ inputs.frontend }}
+      DEPLOY_AUTH: ${{ inputs.auth }}
+      DEPLOY_USER: ${{ inputs.user }}
+      DEPLOY_PRODUCT: ${{ inputs.product }}
+      DEPLOY_PLATFORM: ${{ inputs.platform }}
+      PUBLISHED_FRONTEND: ${{ inputs.frontend_image_published }}
+      PUBLISHED_AUTH: ${{ inputs.auth_image_published }}
+      PUBLISHED_USER: ${{ inputs.user_image_published }}
+      PUBLISHED_PRODUCT: ${{ inputs.product_image_published }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify deployment identity and restricted access
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(stat -c '%a' "$KUBECONFIG")" = "600"
+          test "$(kubectl auth can-i patch deployments -n "$NAMESPACE")" = "yes"
+          test "$(kubectl auth can-i get pods -n default)" = "no"
+
+      - name: Render and apply selected manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          deployed_components="$RUNNER_TEMP/deployed-components"
+          : > "$deployed_components"
+          image_registry="ghcr.io/${GITHUB_REPOSITORY,,}"
+
+          deploy_flag() {
+            case "$1" in
+              frontend) printf '%s' "$DEPLOY_FRONTEND" ;;
+              auth-service) printf '%s' "$DEPLOY_AUTH" ;;
+              user-service) printf '%s' "$DEPLOY_USER" ;;
+              product-service) printf '%s' "$DEPLOY_PRODUCT" ;;
+              *) return 1 ;;
+            esac
+          }
+
+          published_flag() {
+            case "$1" in
+              frontend) printf '%s' "$PUBLISHED_FRONTEND" ;;
+              auth-service) printf '%s' "$PUBLISHED_AUTH" ;;
+              user-service) printf '%s' "$PUBLISHED_USER" ;;
+              product-service) printf '%s' "$PUBLISHED_PRODUCT" ;;
+              *) return 1 ;;
+            esac
+          }
+
+          current_image() {
+            local component="$1"
+            local image
+            image="$(kubectl get deployment "$component" -n "$NAMESPACE" \
+              -o jsonpath='{.spec.template.spec.containers[0].image}')"
+            test -n "$image"
+            printf '%s' "$image"
+          }
+
+          desired_image() {
+            local component="$1"
+            if [[ "$(published_flag "$component")" == "true" ]]; then
+              printf '%s/%s:%s' "$image_registry" "$component" "$GITHUB_SHA"
+            else
+              current_image "$component"
+            fi
+          }
+
+          record_selected_components() {
+            local component
+            for component in frontend auth-service user-service product-service; do
+              if [[ "$(deploy_flag "$component")" == "true" ]]; then
+                printf '%s\n' "$component" >> "$deployed_components"
+              fi
+            done
+          }
+
+          if [[ "$DEPLOY_PLATFORM" == "true" ]]; then
+            export FRONTEND_IMAGE="$(desired_image frontend)"
+            export AUTH_SERVICE_IMAGE="$(desired_image auth-service)"
+            export USER_SERVICE_IMAGE="$(desired_image user-service)"
+            export PRODUCT_SERVICE_IMAGE="$(desired_image product-service)"
+
+            printf 'Applying shared resources with images:\n'
+            printf '  frontend=%s\n' "$FRONTEND_IMAGE"
+            printf '  auth-service=%s\n' "$AUTH_SERVICE_IMAGE"
+            printf '  user-service=%s\n' "$USER_SERVICE_IMAGE"
+            printf '  product-service=%s\n' "$PRODUCT_SERVICE_IMAGE"
+
+            DEPLOY_TARGET=platform \
+              sh scripts/render-manifests.sh "$RUNNER_TEMP/rendered-platform"
+            kubectl apply -k "$RUNNER_TEMP/rendered-platform"
+            record_selected_components
+          else
+            for component in frontend auth-service user-service product-service; do
+              [[ "$(deploy_flag "$component")" == "true" ]] || continue
+              image="$(desired_image "$component")"
+              current="$(kubectl get deployment "$component" -n "$NAMESPACE" \
+                -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
+              current="${current:-<not deployed>}"
+              printf '%s: current=%s desired=%s\n' "$component" "$current" "$image"
+
+              DEPLOY_TARGET="$component" IMAGE_REF="$image" \
+                sh scripts/render-manifests.sh "$RUNNER_TEMP/rendered-$component"
+              kubectl apply -k "$RUNNER_TEMP/rendered-$component"
+              printf '%s\n' "$component" >> "$deployed_components"
+            done
+          fi
+
+      - name: Wait for selected rollouts
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r deployment; do
+            [[ -n "$deployment" ]] || continue
+            kubectl rollout status "deployment/$deployment" \
+              -n "$NAMESPACE" --timeout=180s
+          done < "$RUNNER_TEMP/deployed-components"
+
+      - name: Verify selected replica placement
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r deployment; do
+            [[ -n "$deployment" ]] || continue
+            available="$(kubectl get deployment "$deployment" -n "$NAMESPACE" \
+              -o jsonpath='{.status.availableReplicas}')"
+            placements="$(kubectl get pods -n "$NAMESPACE" \
+              -l "app.kubernetes.io/name=$deployment" \
+              -o go-template='{{range .items}}{{if not .metadata.deletionTimestamp}}{{.spec.nodeName}}{{"\n"}}{{end}}{{end}}')"
+            pod_count="$(printf '%s\n' "$placements" | sed '/^$/d' | wc -l | tr -d ' ')"
+            node_count="$(printf '%s\n' "$placements" | sed '/^$/d' | sort -u | wc -l | tr -d ' ')"
+
+            printf '%s: available=%s pods=%s nodes=%s\n%s\n' \
+              "$deployment" "$available" "$pod_count" "$node_count" "$placements"
+            test "$available" = "2"
+            test "$pod_count" = "2"
+            test "$node_count" = "2"
+          done < "$RUNNER_TEMP/deployed-components"
+
+      - name: Validate affected routes through HAProxy and Traefik
+        shell: bash
+        run: |
+          set -euo pipefail
+          routes=()
+
+          if [[ "$DEPLOY_PLATFORM" == "true" ]]; then
+            routes=(/ /api/auth/health /api/users/health /api/products/health)
+          else
+            [[ "$DEPLOY_FRONTEND" == "true" ]] && routes+=(/)
+            [[ "$DEPLOY_AUTH" == "true" ]] && routes+=(/api/auth/health)
+            [[ "$DEPLOY_USER" == "true" ]] && routes+=(/api/users/health)
+            [[ "$DEPLOY_PRODUCT" == "true" ]] && routes+=(/api/products/health)
+          fi
+
+          for path in "${routes[@]}"; do
+            echo "Checking $path"
+            curl --fail --show-error --silent --retry 5 \
+              -H 'Host: app1.onprem.site' "http://192.168.30.45${path}" >/dev/null
+          done
+
+      - name: Show deployment evidence
+        if: always()
+        shell: bash
+        run: |
+          kubectl get deployments,pods,services,endpointslices,ingress \
+            -n "$NAMESPACE" -o wide
+          echo "Rollback: kubectl rollout undo deployment/<name> -n $NAMESPACE"

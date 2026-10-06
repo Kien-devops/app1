@@ -6,160 +6,138 @@ on:
     branches: [main]
 
 concurrency:
-  group: production-${{ github.ref }}
+  group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'app1-production' || format('app1-{0}', github.ref) }}
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  test:
-    name: Test ${{ matrix.component }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        component: [frontend, auth-service, user-service, product-service]
-        include:
-          - component: frontend
-            directory: frontend
-          - component: auth-service
-            directory: services/auth-service
-          - component: user-service
-            directory: services/user-service
-          - component: product-service
-            directory: services/product-service
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-          package-manager-cache: false
-      - name: Run tests
-        working-directory: ${{ matrix.directory }}
-        run: npm test
+  detect:
+    name: Detect changed components
+    uses: ./.github/workflows/detect-changes.yml
 
-  build-scan-publish:
-    name: Build and scan ${{ matrix.component }}
-    needs: test
-    runs-on: ubuntu-latest
+  test_frontend:
+    name: Test frontend
+    needs: detect
+    if: needs.detect.outputs.frontend == 'true'
+    uses: ./.github/workflows/test-service.yml
+    with:
+      component: frontend
+      directory: frontend
+
+  test_auth:
+    name: Test auth-service
+    needs: detect
+    if: needs.detect.outputs.auth == 'true'
+    uses: ./.github/workflows/test-service.yml
+    with:
+      component: auth-service
+      directory: services/auth-service
+
+  test_user:
+    name: Test user-service
+    needs: detect
+    if: needs.detect.outputs.user == 'true'
+    uses: ./.github/workflows/test-service.yml
+    with:
+      component: user-service
+      directory: services/user-service
+
+  test_product:
+    name: Test product-service
+    needs: detect
+    if: needs.detect.outputs.product == 'true'
+    uses: ./.github/workflows/test-service.yml
+    with:
+      component: product-service
+      directory: services/product-service
+
+  build_frontend:
+    name: Build, scan, and publish frontend
+    needs: [detect, test_frontend]
+    if: needs.detect.outputs.frontend == 'true'
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        component: [frontend, auth-service, user-service, product-service]
-        include:
-          - component: frontend
-            dockerfile: frontend/Dockerfile
-          - component: auth-service
-            dockerfile: services/auth-service/Dockerfile
-          - component: user-service
-            dockerfile: services/user-service/Dockerfile
-          - component: product-service
-            dockerfile: services/product-service/Dockerfile
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Define immutable image reference
-        shell: bash
-        run: |
-          echo "IMAGE_REGISTRY=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
-          echo "LOCAL_IMAGE=local/${{ matrix.component }}:${GITHUB_SHA}" >> "$GITHUB_ENV"
-      - name: Build image
-        run: docker build --file "${{ matrix.dockerfile }}" --tag "$LOCAL_IMAGE" .
-      - name: Scan image for fixable critical vulnerabilities
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ env.LOCAL_IMAGE }}
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          vuln-type: os,library
-          severity: CRITICAL
-      - name: Login to GHCR
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: bash
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-      - name: Push immutable image
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: bash
-        run: |
-          remote_image="$IMAGE_REGISTRY/${{ matrix.component }}:$GITHUB_SHA"
-          docker tag "$LOCAL_IMAGE" "$remote_image"
-          docker push "$remote_image"
+    uses: ./.github/workflows/build-publish-service.yml
+    with:
+      component: frontend
+      dockerfile: frontend/Dockerfile
+      publish: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+  build_auth:
+    name: Build, scan, and publish auth-service
+    needs: [detect, test_auth]
+    if: needs.detect.outputs.auth == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-publish-service.yml
+    with:
+      component: auth-service
+      dockerfile: services/auth-service/Dockerfile
+      publish: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+  build_user:
+    name: Build, scan, and publish user-service
+    needs: [detect, test_user]
+    if: needs.detect.outputs.user == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-publish-service.yml
+    with:
+      component: user-service
+      dockerfile: services/user-service/Dockerfile
+      publish: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+  build_product:
+    name: Build, scan, and publish product-service
+    needs: [detect, test_product]
+    if: needs.detect.outputs.product == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-publish-service.yml
+    with:
+      component: product-service
+      dockerfile: services/product-service/Dockerfile
+      publish: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
   deploy:
-    name: Deploy exact Git SHA to K3s
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: build-scan-publish
-    runs-on: [self-hosted, Linux, X64, k3s-deploy]
-    environment: production
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Verify deployment identity
-        env:
-          KUBECONFIG: /home/monitor/.kube/microservices-demo-deployer.config
-        run: |
-          test "$(stat -c '%a' "$KUBECONFIG")" = "600"
-          kubectl auth can-i patch deployments -n microservices-demo
-          test "$(kubectl auth can-i get pods -n default)" = "no"
-      - name: Render and apply immutable manifests
-        env:
-          KUBECONFIG: /home/monitor/.kube/microservices-demo-deployer.config
-        shell: bash
-        run: |
-          export IMAGE_REGISTRY="ghcr.io/${GITHUB_REPOSITORY,,}"
-          export IMAGE_TAG="$GITHUB_SHA"
-          sh scripts/render-manifests.sh "$RUNNER_TEMP/rendered"
-          kubectl apply -k "$RUNNER_TEMP/rendered"
-      - name: Wait for all rollouts
-        env:
-          KUBECONFIG: /home/monitor/.kube/microservices-demo-deployer.config
-        run: |
-          for deployment in frontend auth-service user-service product-service; do
-            kubectl rollout status "deployment/$deployment" -n microservices-demo --timeout=180s
-          done
-      - name: Verify replicas are distributed across workers
-        env:
-          KUBECONFIG: /home/monitor/.kube/microservices-demo-deployer.config
-        shell: bash
-        run: |
-          for deployment in frontend auth-service user-service product-service; do
-            available="$(kubectl get deployment "$deployment" -n microservices-demo \
-              -o jsonpath='{.status.availableReplicas}')"
-            placements="$(kubectl get pods -n microservices-demo \
-              -l "app.kubernetes.io/name=$deployment" \
-              -o go-template='{{range .items}}{{if not .metadata.deletionTimestamp}}{{.spec.nodeName}}{{"\n"}}{{end}}{{end}}')"
-            pod_count="$(printf '%s\n' "$placements" | sed '/^$/d' | wc -l | tr -d ' ')"
-            node_count="$(printf '%s\n' "$placements" | sed '/^$/d' | sort -u | wc -l | tr -d ' ')"
-
-            printf '%s: available=%s pods=%s nodes=%s\n%s\n' \
-              "$deployment" "$available" "$pod_count" "$node_count" "$placements"
-            test "$available" = "2"
-            test "$pod_count" = "2"
-            test "$node_count" = "2"
-          done
-      - name: Validate service routes through HAProxy and Traefik
-        shell: bash
-        run: |
-          for path in / /api/auth/health /api/users/health /api/products/health; do
-            curl --fail --show-error --silent --retry 5 \
-              -H 'Host: app1.onprem.site' "http://192.168.30.45${path}" >/dev/null
-          done
-      - name: Show deployment evidence
-        if: always()
-        env:
-          KUBECONFIG: /home/monitor/.kube/microservices-demo-deployer.config
-        run: |
-          kubectl get deployments,pods,services,endpointslices,ingress -n microservices-demo -o wide
-          echo "Rollback: kubectl rollout undo deployment/<name> -n microservices-demo"
+    name: Deploy changed components to K3s
+    needs:
+      - detect
+      - build_frontend
+      - build_auth
+      - build_user
+      - build_product
+    if: >-
+      ${{
+        !cancelled() &&
+        github.event_name == 'push' &&
+        github.ref == 'refs/heads/main' &&
+        (needs.detect.outputs.deploy_frontend == 'true' ||
+         needs.detect.outputs.deploy_auth == 'true' ||
+         needs.detect.outputs.deploy_user == 'true' ||
+         needs.detect.outputs.deploy_product == 'true' ||
+         needs.detect.outputs.platform == 'true') &&
+        (needs.detect.outputs.frontend != 'true' || needs.build_frontend.result == 'success') &&
+        (needs.detect.outputs.auth != 'true' || needs.build_auth.result == 'success') &&
+        (needs.detect.outputs.user != 'true' || needs.build_user.result == 'success') &&
+        (needs.detect.outputs.product != 'true' || needs.build_product.result == 'success')
+      }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/deploy-service.yml
+    with:
+      frontend: ${{ needs.detect.outputs.deploy_frontend == 'true' }}
+      auth: ${{ needs.detect.outputs.deploy_auth == 'true' }}
+      user: ${{ needs.detect.outputs.deploy_user == 'true' }}
+      product: ${{ needs.detect.outputs.deploy_product == 'true' }}
+      platform: ${{ needs.detect.outputs.platform == 'true' }}
+      frontend_image_published: ${{ needs.detect.outputs.frontend == 'true' }}
+      auth_image_published: ${{ needs.detect.outputs.auth == 'true' }}
+      user_image_published: ${{ needs.detect.outputs.user == 'true' }}
+      product_image_published: ${{ needs.detect.outputs.product == 'true' }}

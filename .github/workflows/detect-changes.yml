@@ -1,0 +1,208 @@
+name: detect-changes
+
+on:
+  workflow_call:
+    outputs:
+      frontend:
+        description: Whether the frontend image must be tested and rebuilt
+        value: ${{ jobs.detect.outputs.frontend }}
+      auth:
+        description: Whether the auth-service image must be tested and rebuilt
+        value: ${{ jobs.detect.outputs.auth }}
+      user:
+        description: Whether the user-service image must be tested and rebuilt
+        value: ${{ jobs.detect.outputs.user }}
+      product:
+        description: Whether the product-service image must be tested and rebuilt
+        value: ${{ jobs.detect.outputs.product }}
+      deploy_frontend:
+        description: Whether the frontend Kubernetes resources must be applied
+        value: ${{ jobs.detect.outputs.deploy_frontend }}
+      deploy_auth:
+        description: Whether the auth-service Kubernetes resources must be applied
+        value: ${{ jobs.detect.outputs.deploy_auth }}
+      deploy_user:
+        description: Whether the user-service Kubernetes resources must be applied
+        value: ${{ jobs.detect.outputs.deploy_user }}
+      deploy_product:
+        description: Whether the product-service Kubernetes resources must be applied
+        value: ${{ jobs.detect.outputs.deploy_product }}
+      platform:
+        description: Whether shared Kustomize, Ingress, or NetworkPolicy resources must be applied
+        value: ${{ jobs.detect.outputs.platform }}
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    name: Classify changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.changes.outputs.frontend }}
+      auth: ${{ steps.changes.outputs.auth }}
+      user: ${{ steps.changes.outputs.user }}
+      product: ${{ steps.changes.outputs.product }}
+      deploy_frontend: ${{ steps.changes.outputs.deploy_frontend }}
+      deploy_auth: ${{ steps.changes.outputs.deploy_auth }}
+      deploy_user: ${{ steps.changes.outputs.deploy_user }}
+      deploy_product: ${{ steps.changes.outputs.deploy_product }}
+      platform: ${{ steps.changes.outputs.platform }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Detect and classify changed files
+        id: changes
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          initial_push=false
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base_sha="$PR_BASE_SHA"
+            head_sha="$PR_HEAD_SHA"
+          else
+            base_sha="$PUSH_BEFORE_SHA"
+            head_sha="$CURRENT_SHA"
+          fi
+
+          if [[ -z "$base_sha" || "$base_sha" =~ ^0+$ ]]; then
+            initial_push=true
+          elif ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$base_sha"
+          fi
+
+          declare -A changed=(
+            [frontend]=false
+            [auth]=false
+            [user]=false
+            [product]=false
+            [manifest_frontend]=false
+            [manifest_auth]=false
+            [manifest_user]=false
+            [manifest_product]=false
+            [platform]=false
+          )
+
+          if [[ "$initial_push" == "true" ]]; then
+            mapfile -t changed_files < <(
+              git diff-tree --root --no-commit-id --name-only -r "$head_sha"
+            )
+          elif [[ "$EVENT_NAME" == "pull_request" ]]; then
+            mapfile -t changed_files < <(
+              git diff --name-only --diff-filter=ACMRD "$base_sha...$head_sha"
+            )
+          else
+            mapfile -t changed_files < <(
+              git diff --name-only --diff-filter=ACMRD "$base_sha" "$head_sha"
+            )
+          fi
+
+          for path in "${changed_files[@]}"; do
+            case "$path" in
+              frontend/*)
+                changed[frontend]=true
+                ;;
+              services/auth-service/*)
+                changed[auth]=true
+                ;;
+              services/user-service/*)
+                changed[user]=true
+                ;;
+              services/product-service/*)
+                changed[product]=true
+                ;;
+              services/common/*)
+                changed[auth]=true
+                changed[user]=true
+                changed[product]=true
+                ;;
+              .dockerignore)
+                changed[frontend]=true
+                changed[auth]=true
+                changed[user]=true
+                changed[product]=true
+                ;;
+              k8s/base/frontend.yaml)
+                changed[manifest_frontend]=true
+                ;;
+              k8s/base/auth-service.yaml)
+                changed[manifest_auth]=true
+                ;;
+              k8s/base/user-service.yaml)
+                changed[manifest_user]=true
+                ;;
+              k8s/base/product-service.yaml)
+                changed[manifest_product]=true
+                ;;
+              k8s/base/kustomization.yaml)
+                changed[platform]=true
+                changed[manifest_frontend]=true
+                changed[manifest_auth]=true
+                changed[manifest_user]=true
+                changed[manifest_product]=true
+                ;;
+              k8s/base/*)
+                changed[platform]=true
+                ;;
+            esac
+          done
+
+          deploy_frontend="${changed[frontend]}"
+          deploy_auth="${changed[auth]}"
+          deploy_user="${changed[user]}"
+          deploy_product="${changed[product]}"
+
+          [[ "${changed[manifest_frontend]}" == "true" ]] && deploy_frontend=true
+          [[ "${changed[manifest_auth]}" == "true" ]] && deploy_auth=true
+          [[ "${changed[manifest_user]}" == "true" ]] && deploy_user=true
+          [[ "${changed[manifest_product]}" == "true" ]] && deploy_product=true
+
+          {
+            echo "frontend=${changed[frontend]}"
+            echo "auth=${changed[auth]}"
+            echo "user=${changed[user]}"
+            echo "product=${changed[product]}"
+            echo "deploy_frontend=$deploy_frontend"
+            echo "deploy_auth=$deploy_auth"
+            echo "deploy_user=$deploy_user"
+            echo "deploy_product=$deploy_product"
+            echo "platform=${changed[platform]}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Change detection"
+            echo
+            if [[ "$initial_push" == "true" ]]; then
+              echo "Classified the initial tree at \`$head_sha\`."
+            else
+              echo "Compared \`$base_sha\` to \`$head_sha\`."
+            fi
+            echo
+            echo '| Output | Value |'
+            echo '| --- | --- |'
+            echo "| frontend | ${changed[frontend]} |"
+            echo "| auth | ${changed[auth]} |"
+            echo "| user | ${changed[user]} |"
+            echo "| product | ${changed[product]} |"
+            echo "| deploy_frontend | $deploy_frontend |"
+            echo "| deploy_auth | $deploy_auth |"
+            echo "| deploy_user | $deploy_user |"
+            echo "| deploy_product | $deploy_product |"
+            echo "| platform | ${changed[platform]} |"
+            echo
+            echo '<details><summary>Changed files</summary>'
+            echo
+            printf '%s\n' "${changed_files[@]}" | sed 's/^/- `/' | sed 's/$/`/'
+            echo
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"

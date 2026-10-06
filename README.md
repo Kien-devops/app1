@@ -26,10 +26,10 @@ Code → Test → Build image → Security scan → GHCR → Deploy K3s → Vali
    - Workload chạy non-root, read-only filesystem và bị giới hạn quyền.
 
 3. **Tự động hóa CI/CD**
-   - GitHub Actions test từng component.
-   - Build và quét từng image bằng Trivy.
+   - GitHub Actions phát hiện path thay đổi và chỉ test component liên quan.
+   - Chỉ build và quét các image bị ảnh hưởng bằng Trivy.
    - Image được gắn bằng full Git SHA, không dùng `latest`.
-   - Self-hosted runner triển khai đúng image đã build vào K3s.
+   - Self-hosted runner chỉ triển khai Deployment hoặc cấu hình K3s đã thay đổi.
 
 ## 2. Chức năng ứng dụng
 
@@ -112,9 +112,9 @@ k3s-onprem
                     |
                     v
 app1
-  -> test và build bốn container image
-  -> push image lên GHCR
-  -> deploy workload vào namespace microservices-demo
+  -> phát hiện component thay đổi
+  -> test, build và push đúng image bị ảnh hưởng
+  -> deploy chọn lọc vào namespace microservices-demo
   -> kiểm tra ứng dụng qua hạ tầng có sẵn
 ```
 
@@ -128,25 +128,66 @@ app1
 ### Luồng CI/CD
 
 ```text
-Push / Pull Request
-        │
-        ▼
-GitHub-hosted runners
-        ├── Test 4 component song song
-        ├── Build 4 container image
-        └── Trivy scan từng image
-                    │
-                    ▼
-                  GHCR
-        image:<full-git-sha>
-                    │
-                    ▼
-Self-hosted runner - server-tang3
-        ├── Render manifest bằng exact Git SHA
-        ├── kubectl apply
-        ├── Chờ rollout
-        └── Kiểm tra route qua HAProxy và Traefik
+Pull Request
+    │
+    ▼
+Change Detection
+    │
+    ▼
+Changed Services
+    │
+    └── Test → Build → Trivy
+
+Không push image và không sử dụng self-hosted deploy runner.
 ```
+
+```text
+Push / merge vào main
+    │
+    ▼
+Change Detection
+    │
+    ▼
+Changed Services
+    │
+    └── Test → Build → Trivy → GHCR → K3s
+                                      │
+                                      ├── apply resource đã đổi
+                                      ├── chờ rollout đã đổi
+                                      └── kiểm tra route liên quan
+```
+
+Pipeline gồm một workflow điều phối và bốn reusable workflow. Mỗi nhánh component
+chạy độc lập với `fail-fast` không làm mất kết quả của component khác. Job không liên
+quan xuất hiện ở trạng thái `skipped`, không phải `failed`. Image được push theo dạng
+`ghcr.io/<owner>/<repo>/<component>:<full-git-sha>`; pipeline không tạo tag `latest`.
+
+#### Quy tắc path filter
+
+| Path thay đổi | Test/build/scan image | Deploy |
+| --- | --- | --- |
+| `frontend/**` | frontend | frontend với image SHA mới |
+| `services/auth-service/**` | auth-service | auth-service với image SHA mới |
+| `services/user-service/**` | user-service | user-service với image SHA mới |
+| `services/product-service/**` | product-service | product-service với image SHA mới |
+| `services/common/**` | auth, user, product | ba backend với image SHA mới |
+| `.dockerignore` | cả bốn component | cả bốn component với image SHA mới |
+| `k8s/base/<component>.yaml` | không build image | chỉ apply component đó, giữ nguyên image đang chạy |
+| `k8s/base/ingress.yaml`, `network-policy.yaml` hoặc file shared mới trong `k8s/base/` | không build image | apply shared base với image hiện tại; kiểm tra toàn bộ route |
+| `k8s/base/kustomization.yaml` | không build image | apply toàn bộ base và chờ cả bốn Deployment vì label/selector có thể đổi |
+| `.github/workflows/**`, `scripts/**`, `k8s/bootstrap/**`, `docs/**`, `README.md` | không build image | không tự động deploy production |
+
+`.dockerignore` ảnh hưởng Docker context dùng chung nên phải rebuild cả bốn image.
+Ngược lại, các file workflow hoặc tài liệu được GitHub parse/chạy ở lớp orchestration
+nhưng không làm thay đổi nội dung image. `k8s/bootstrap/**` vẫn là thao tác quản trị
+thủ công vì deploy identity cố ý không có quyền sửa Namespace, Role hoặc RoleBinding.
+
+Khi chỉ manifest của một component thay đổi, workflow đọc image hiện đang chạy từ
+Deployment, render một Kustomize bundle chỉ chứa component đó và apply bundle này.
+Vì vậy thay đổi `auth-service.yaml` không tạo SHA image không tồn tại và không chạm
+vào Pod template của frontend, user-service hoặc product-service. Với shared manifest,
+workflow render toàn bộ base bằng chính image hiện tại của component không rebuild;
+`kubectl apply` không rollout Deployment nếu Pod template không thay đổi.
 
 ## 4. Công nghệ sử dụng
 
@@ -165,7 +206,12 @@ Self-hosted runner - server-tang3
 
 ```text
 .
-├── .github/workflows/ci-cd.yml
+├── .github/workflows/
+│   ├── build-publish-service.yml
+│   ├── ci-cd.yml
+│   ├── deploy-service.yml
+│   ├── detect-changes.yml
+│   └── test-service.yml
 ├── docs/github-bootstrap.md
 ├── frontend/
 │   ├── app.js
@@ -215,7 +261,11 @@ Self-hosted runner - server-tang3
 
 | File | Chức năng |
 | --- | --- |
-| `.github/workflows/ci-cd.yml` | Pipeline test, build, Trivy scan, push GHCR và deploy K3s. Các Action được pin bằng commit SHA. |
+| `.github/workflows/ci-cd.yml` | Điều phối các reusable workflow cho pull request và `main`; giữ concurrency production không hủy job đang chạy. |
+| `.github/workflows/detect-changes.yml` | So sánh base/head commit và xuất cờ build/deploy theo path. |
+| `.github/workflows/test-service.yml` | Chạy test Node.js 24 cho component được truyền vào. |
+| `.github/workflows/build-publish-service.yml` | Build từ root context, quét Trivy và chỉ push GHCR trên `main`. |
+| `.github/workflows/deploy-service.yml` | Render/apply chọn lọc trên runner `k3s-deploy`, kiểm tra RBAC, rollout, replica và route liên quan. |
 | `docs/github-bootstrap.md` | Hướng dẫn tạo GitHub repository, GHCR, production environment và self-hosted runner. |
 
 ### `frontend/`
@@ -459,7 +509,9 @@ Push `main` sẽ kích hoạt pipeline:
 git push origin main
 ```
 
-Deploy chỉ chạy sau khi toàn bộ test, build, scan và push image thành công.
+Deploy chỉ chạy sau khi test, build, scan và push của mọi component bị ảnh hưởng
+thành công. Component không đổi không bị build, retag hoặc rollout. Thay đổi chỉ ở
+manifest Kubernetes dùng image hiện đang chạy và không push image mới.
 
 ### Thủ công có kiểm soát
 
@@ -547,7 +599,9 @@ git revert <bad-commit-sha>
 git push origin main
 ```
 
-Cách này giữ lịch sử thay đổi rõ ràng và đảm bảo cả bốn component dùng một known-good Git SHA.
+Cách này giữ lịch sử thay đổi rõ ràng. Pipeline chọn lọc sẽ chỉ đưa component bị
+ảnh hưởng về image SHA của commit revert; các component không liên quan tiếp tục
+chạy image immutable đã được xác nhận trước đó.
 
 ## 14. Troubleshooting
 

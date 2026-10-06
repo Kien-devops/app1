@@ -1,0 +1,73 @@
+name: build-publish-service
+
+on:
+  workflow_call:
+    inputs:
+      component:
+        description: Component and GHCR package name
+        required: true
+        type: string
+      dockerfile:
+        description: Dockerfile path relative to the repository root
+        required: true
+        type: string
+      publish:
+        description: Push the scanned image to GHCR
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build_scan_publish:
+    name: Build and scan ${{ inputs.component }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Define immutable image references
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "IMAGE_REGISTRY=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "LOCAL_IMAGE=local/${{ inputs.component }}:${GITHUB_SHA}" >> "$GITHUB_ENV"
+
+      - name: Build image
+        shell: bash
+        run: docker build --file "${{ inputs.dockerfile }}" --tag "$LOCAL_IMAGE" .
+
+      - name: Scan image for fixable critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.LOCAL_IMAGE }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL
+
+      - name: Login to GHCR
+        if: inputs.publish
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Push immutable image
+        if: inputs.publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_image="$IMAGE_REGISTRY/${{ inputs.component }}:$GITHUB_SHA"
+          docker tag "$LOCAL_IMAGE" "$remote_image"
+          docker push "$remote_image"
+
+      - name: Logout from GHCR
+        if: inputs.publish && always()
+        shell: bash
+        run: docker logout ghcr.io
