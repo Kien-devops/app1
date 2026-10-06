@@ -32,3 +32,16 @@ test('accepts a demo login without returning the supplied password', () => withS
   assert.equal(body.principal, 'alice');
   assert.equal(JSON.stringify(body).includes('not-logged'), false);
 }));
+
+test('rejects a login when username is missing', () => withServer(async (baseUrl) => {
+  const response = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ password: 'not-logged' }),
+  });
+  const body = await response.json();
+  assert.equal(response.status, 400);
+  assert.equal(body.error, 'invalid_request');
+  assert.equal(body.message, 'username is required');
+  assert.equal(JSON.stringify(body).includes('not-logged'), false);
+}));
