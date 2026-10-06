@@ -298,7 +298,7 @@ NGINX frontend chỉ serve static files. Việc route `/api/...` đến backend 
 
 | File | Chức năng |
 | --- | --- |
-| `frontend.yaml` | Deployment 3 replicas phân bố `2+1` trên hai worker và ClusterIP Service cho frontend. |
+| `frontend.yaml` | Deployment 4 replicas phân bố `2+2` trên hai worker và ClusterIP Service cho frontend. |
 | `auth-service.yaml` | Deployment 2 replicas phân tán theo node và Service cho Auth API. |
 | `user-service.yaml` | Deployment 2 replicas phân tán theo node và Service cho User API. |
 | `product-service.yaml` | Deployment 2 replicas phân tán theo node và Service cho Product API. |
@@ -306,7 +306,7 @@ NGINX frontend chỉ serve static files. Việc route `/api/...` đến backend 
 | `network-policy.yaml` | Default deny và chỉ cho traffic tin cậy từ `kube-system`. |
 | `kustomization.yaml` | Gom manifest, đặt namespace và common labels. |
 
-Các Deployment đều có readiness/liveness probe, resource requests/limits, RollingUpdate, non-root user, seccomp, read-only root filesystem và drop Linux capabilities. `topologySpreadConstraints` với `maxSkew: 1` và `DoNotSchedule` giữ replica cân bằng giữa hai worker: frontend 3 replica được phân bố `2+1`, còn mỗi backend có 2 replica được phân bố `1+1`. `maxSurge: 0` và `maxUnavailable: 1` hạn chế Pod tạm thời làm sai lệch topology trong lúc rollout.
+Các Deployment đều có readiness/liveness probe, resource requests/limits, RollingUpdate, non-root user, seccomp, read-only root filesystem và drop Linux capabilities. `topologySpreadConstraints` với `maxSkew: 1` và `DoNotSchedule` giữ replica cân bằng giữa hai worker: frontend 4 replica được phân bố `2+2`, còn mỗi backend có 2 replica được phân bố `1+1`. `maxSurge: 0` và `maxUnavailable: 1` hạn chế Pod tạm thời làm sai lệch topology trong lúc rollout.
 
 ### `k8s/bootstrap/` và `scripts/`
 
@@ -541,7 +541,7 @@ kubectl get deployments,pods,services,endpointslices,ingress \
 
 Kết quả mong đợi:
 
-- frontend `3/3` Ready;
+- frontend `4/4` Ready;
 - ba backend `2/2` Ready;
 - tất cả Pod `Running`;
 - mỗi Service có EndpointSlice;
@@ -651,7 +651,7 @@ Giới hạn hiện tại:
 - User và Product dùng dữ liệu tĩnh, chưa có database.
 - Một control plane và một edge node vẫn là các single point of failure. Nếu tang2 lỗi thì API/SQLite và khả năng reconcile mất; nếu tang3 lỗi thì public edge và HAProxy mất.
 - Nếu tang3 lỗi, cluster vẫn chạy nội bộ nhưng stable API endpoint, Cloudflare Tunnel và public application route bị gián đoạn.
-- Frontend có ba replica phân bố `2+1`; mỗi backend có hai replica phân bố `1+1` trên tang1/tang4. Cùng với hai Traefik/ServiceLB replica, thiết kế này giảm ảnh hưởng khi một worker lỗi nhưng không thay thế control-plane/edge HA.
+- Frontend có bốn replica phân bố `2+2`; mỗi backend có hai replica phân bố `1+1` trên tang1/tang4. Cùng với hai Traefik/ServiceLB replica, thiết kế này giảm ảnh hưởng khi một worker lỗi nhưng không thay thế control-plane/edge HA.
 - Deploy kubeconfig dùng long-lived token và cần rotate định kỳ.
 - Chưa có autoscaling, distributed tracing hoặc automated backup.
 
