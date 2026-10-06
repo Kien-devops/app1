@@ -169,19 +169,60 @@ jobs:
           set -euo pipefail
           while IFS= read -r deployment; do
             [[ -n "$deployment" ]] || continue
+
+            desired="$(kubectl get deployment "$deployment" -n "$NAMESPACE" \
+              -o jsonpath='{.spec.replicas}')"
+            updated="$(kubectl get deployment "$deployment" -n "$NAMESPACE" \
+              -o jsonpath='{.status.updatedReplicas}')"
+            ready="$(kubectl get deployment "$deployment" -n "$NAMESPACE" \
+              -o jsonpath='{.status.readyReplicas}')"
             available="$(kubectl get deployment "$deployment" -n "$NAMESPACE" \
               -o jsonpath='{.status.availableReplicas}')"
+            updated="${updated:-0}"
+            ready="${ready:-0}"
+            available="${available:-0}"
+
+            [[ "$desired" =~ ^[0-9]+$ ]]
+            [[ "$updated" =~ ^[0-9]+$ ]]
+            [[ "$ready" =~ ^[0-9]+$ ]]
+            [[ "$available" =~ ^[0-9]+$ ]]
+
+            if (( desired < 1 )); then
+              echo "$deployment must have at least one replica" >&2
+              exit 1
+            fi
+
             placements="$(kubectl get pods -n "$NAMESPACE" \
               -l "app.kubernetes.io/name=$deployment" \
               -o go-template='{{range .items}}{{if not .metadata.deletionTimestamp}}{{.spec.nodeName}}{{"\n"}}{{end}}{{end}}')"
             pod_count="$(printf '%s\n' "$placements" | sed '/^$/d' | wc -l | tr -d ' ')"
             node_count="$(printf '%s\n' "$placements" | sed '/^$/d' | sort -u | wc -l | tr -d ' ')"
+            minimum_nodes=$(( desired < 2 ? desired : 2 ))
 
-            printf '%s: available=%s pods=%s nodes=%s\n%s\n' \
-              "$deployment" "$available" "$pod_count" "$node_count" "$placements"
-            test "$available" = "2"
-            test "$pod_count" = "2"
-            test "$node_count" = "2"
+            printf '%s: desired=%s updated=%s ready=%s available=%s pods=%s nodes=%s\n%s\n' \
+              "$deployment" "$desired" "$updated" "$ready" "$available" \
+              "$pod_count" "$node_count" "$placements"
+
+            if (( updated != desired )); then
+              echo "$deployment has not updated all replicas" >&2
+              exit 1
+            fi
+            if (( ready != desired )); then
+              echo "$deployment does not have all replicas Ready" >&2
+              exit 1
+            fi
+            if (( available != desired )); then
+              echo "$deployment does not have all replicas available" >&2
+              exit 1
+            fi
+            if (( pod_count != desired )); then
+              echo "$deployment pod count does not match spec.replicas" >&2
+              exit 1
+            fi
+            if (( node_count < minimum_nodes )); then
+              echo "$deployment is not distributed across enough workers" >&2
+              exit 1
+            fi
           done < "$RUNNER_TEMP/deployed-components"
 
       - name: Validate affected routes through HAProxy and Traefik

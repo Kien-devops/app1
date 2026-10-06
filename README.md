@@ -94,8 +94,8 @@ Ba backend chỉ dùng `ClusterIP`, không expose trực tiếp ra Internet. Tra
 | --- | --- |
 | `server-tang2` | K3s control plane, Kubernetes API và SQLite datastore |
 | `server-tang3` | Ansible controller, HAProxy, cloudflared, monitoring, self-hosted GitHub runner và deploy kubeconfig |
-| `server-tang4` | K3s ingress/application worker chạy Traefik, ServiceLB và một replica của mỗi Deployment |
-| `server-tang1` | K3s ingress/application worker chạy Traefik, ServiceLB và một replica của mỗi Deployment |
+| `server-tang4` | K3s ingress/application worker chạy Traefik, ServiceLB và các replica ứng dụng được scheduler phân bố |
+| `server-tang1` | K3s ingress/application worker chạy Traefik, ServiceLB và các replica ứng dụng được scheduler phân bố |
 
 Đây chưa phải Kubernetes High Availability hoàn chỉnh: tang2 là control plane duy nhất và tang3 là edge/HAProxy duy nhất. Ingress và application Pods được phân tán trên tang1/tang4 để tiếp tục phục vụ khi một worker lỗi.
 
@@ -298,7 +298,7 @@ NGINX frontend chỉ serve static files. Việc route `/api/...` đến backend 
 
 | File | Chức năng |
 | --- | --- |
-| `frontend.yaml` | Deployment 2 replicas phân tán theo node và ClusterIP Service cho frontend. |
+| `frontend.yaml` | Deployment 3 replicas phân bố `2+1` trên hai worker và ClusterIP Service cho frontend. |
 | `auth-service.yaml` | Deployment 2 replicas phân tán theo node và Service cho Auth API. |
 | `user-service.yaml` | Deployment 2 replicas phân tán theo node và Service cho User API. |
 | `product-service.yaml` | Deployment 2 replicas phân tán theo node và Service cho Product API. |
@@ -306,7 +306,7 @@ NGINX frontend chỉ serve static files. Việc route `/api/...` đến backend 
 | `network-policy.yaml` | Default deny và chỉ cho traffic tin cậy từ `kube-system`. |
 | `kustomization.yaml` | Gom manifest, đặt namespace và common labels. |
 
-Các Deployment đều có readiness/liveness probe, resource requests/limits, RollingUpdate, non-root user, seccomp, read-only root filesystem và drop Linux capabilities. `topologySpreadConstraints` với `DoNotSchedule` bắt buộc cân bằng một replica trên mỗi worker; `maxSurge: 0` và `maxUnavailable: 1` ngăn Pod cũ làm sai lệch topology khi rollout. Khi chỉ còn một worker khả dụng, replica thứ hai có thể ở trạng thái `Pending` thay vì phá vỡ failure-domain isolation.
+Các Deployment đều có readiness/liveness probe, resource requests/limits, RollingUpdate, non-root user, seccomp, read-only root filesystem và drop Linux capabilities. `topologySpreadConstraints` với `maxSkew: 1` và `DoNotSchedule` giữ replica cân bằng giữa hai worker: frontend 3 replica được phân bố `2+1`, còn mỗi backend có 2 replica được phân bố `1+1`. `maxSurge: 0` và `maxUnavailable: 1` hạn chế Pod tạm thời làm sai lệch topology trong lúc rollout.
 
 ### `k8s/bootstrap/` và `scripts/`
 
@@ -541,8 +541,8 @@ kubectl get deployments,pods,services,endpointslices,ingress \
 
 Kết quả mong đợi:
 
-- frontend `2/2` Ready;
-- ba backend `1/1` Ready;
+- frontend `3/3` Ready;
+- ba backend `2/2` Ready;
 - tất cả Pod `Running`;
 - mỗi Service có EndpointSlice;
 - Ingress nhận host `app1.onprem.site`.
@@ -651,7 +651,7 @@ Giới hạn hiện tại:
 - User và Product dùng dữ liệu tĩnh, chưa có database.
 - Một control plane và một edge node vẫn là các single point of failure. Nếu tang2 lỗi thì API/SQLite và khả năng reconcile mất; nếu tang3 lỗi thì public edge và HAProxy mất.
 - Nếu tang3 lỗi, cluster vẫn chạy nội bộ nhưng stable API endpoint, Cloudflare Tunnel và public application route bị gián đoạn.
-- Mỗi Deployment có hai replica và bắt buộc phân tán một Pod trên tang1, một Pod trên tang4; cùng với hai Traefik/ServiceLB replica, thiết kế này chịu được lỗi một worker nhưng không thay thế control-plane/edge HA.
+- Frontend có ba replica phân bố `2+1`; mỗi backend có hai replica phân bố `1+1` trên tang1/tang4. Cùng với hai Traefik/ServiceLB replica, thiết kế này giảm ảnh hưởng khi một worker lỗi nhưng không thay thế control-plane/edge HA.
 - Deploy kubeconfig dùng long-lived token và cần rotate định kỳ.
 - Chưa có autoscaling, distributed tracing hoặc automated backup.
 
